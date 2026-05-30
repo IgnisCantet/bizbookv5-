@@ -450,8 +450,9 @@ function HomeScreen({C,company,docs,nav}){
     </div>
   )
 
-  const income=docs.filter(d=>d.direction==='out'&&d.pay_status==='paid').reduce((s,d)=>s+Number(d.amount),0)
-  const pending=docs.filter(d=>d.direction==='out'&&d.pay_status==='unpaid').reduce((s,d)=>s+Number(d.amount),0)
+  const mainDocs=docs.filter(d=>!d.linked_doc_id)
+  const income=mainDocs.filter(d=>d.direction==='out'&&d.pay_status==='paid').reduce((s,d)=>s+Number(d.amount),0)
+  const pending=mainDocs.filter(d=>d.direction==='out'&&d.pay_status==='unpaid').reduce((s,d)=>s+Number(d.amount),0)
   const recent=docs.slice(0,5)
 
   return(
@@ -894,14 +895,14 @@ function generatePDF(doc, company){
 
 
 // ─── NEW DOC SCREEN ───────────────────────────────────────────────
-function NewDocScreen({C,company,cpList,nomList,initType,onBack,onSaved}){
-  const [step,setStep]=useState(1)
+function NewDocScreen({C,company,cpList,nomList,initType,initCp,initRows,linkedDocId,onBack,onSaved}){
+  const [step,setStep]=useState(initCp?2:1)
   const [type,setType]=useState(initType||'invoice')
   const [direction,setDirection]=useState('out')
-  const [cpId,setCpId]=useState('')
-  const [cpName,setCpName]=useState('')
+  const [cpId,setCpId]=useState(initCp?.id||'')
+  const [cpName,setCpName]=useState(initCp?.name||'')
   const [date,setDate]=useState(today())
-  const [rows,setRows]=useState([{name:'',qty:1,unit:'усл',price:'',nds_rate:company?.nds?16:0}])
+  const [rows,setRows]=useState(initRows||[{name:'',qty:1,unit:'усл',price:'',nds_rate:company?.nds?16:0}])
   const [notes,setNotes]=useState('')
   const [loading,setLoading]=useState(false)
   const [error,setError]=useState('')
@@ -929,8 +930,14 @@ function NewDocScreen({C,company,cpList,nomList,initType,onBack,onSaved}){
       company_id:company.id,type,number:docNum,date,direction,
       counterparty_id:cpId||null,counterparty_name:cpName,
       amount:totalAmt,nds_amount:totalNds,
-      items:rows,notes,status:'draft',pay_status:'unpaid'
+      items:rows,notes,status:'draft',pay_status:'unpaid',
+      linked_doc_id:linkedDocId||null
     })
+    // Обновляем статус отгрузки родительского документа
+    if(linkedDocId&&!e){
+      const shipStatus=type==='sf'?'shipped':type==='avr'?'partial':'not_shipped'
+      await documents.update(linkedDocId,{ship_status:shipStatus})
+    }
     setLoading(false)
     if(e){setError(e.message);return}
     onSaved(data)
@@ -969,18 +976,26 @@ function NewDocScreen({C,company,cpList,nomList,initType,onBack,onSaved}){
         {step===2&&(
           <>
             <Sec C={C}>Контрагент</Sec>
-            {cpList.length>0&&(
+            {cpList.length===0?(
+              <div style={{background:C.card2,borderRadius:12,padding:'16px',textAlign:'center',marginBottom:12}}>
+                <p style={{color:C.muted,fontSize:12,margin:'0 0 8px'}}>У вас нет контрагентов</p>
+                <p style={{color:C.muted,fontSize:10,margin:'0 0 12px'}}>Сначала добавьте контрагента в раздел «Контрагенты»</p>
+              </div>
+            ):(
               <div style={{marginBottom:10}}>
-                <p style={{color:C.muted,fontSize:9,fontWeight:700,margin:'0 0 6px',textTransform:'uppercase'}}>Выбрать из базы:</p>
-                <div style={{display:'flex',flexWrap:'wrap',gap:5}}>
+                <p style={{color:C.muted,fontSize:9,fontWeight:700,margin:'0 0 8px',textTransform:'uppercase'}}>Выберите контрагента:</p>
+                <div style={{display:'flex',flexDirection:'column',gap:5}}>
                   {cpList.map(cp=>(
-                    <button key={cp.id} onClick={()=>{setCpId(cp.id);setCpName(cp.name)}} style={{padding:'5px 11px',borderRadius:10,border:`1.5px solid ${cpId===cp.id?C.p:C.border}`,background:cpId===cp.id?C.pSoft:'transparent',color:cpId===cp.id?C.p:C.text,fontSize:10,fontWeight:600,cursor:'pointer'}}>{cp.name}</button>
+                    <button key={cp.id} onClick={()=>{setCpId(cp.id);setCpName(cp.name)}}
+                      style={{padding:'10px 14px',borderRadius:11,border:`1.5px solid ${cpId===cp.id?C.p:C.border}`,background:cpId===cp.id?C.pSoft:C.card2,color:cpId===cp.id?C.p:C.text,fontSize:11,fontWeight:cpId===cp.id?700:400,cursor:'pointer',textAlign:'left',display:'flex',justifyContent:'space-between',alignItems:'center'}}>
+                      <span>{cp.name}</span>
+                      {cpId===cp.id&&<span style={{color:C.p,fontSize:14}}>✓</span>}
+                    </button>
                   ))}
                 </div>
               </div>
             )}
-            <Inp label="Или введите вручную" value={cpName} onChange={v=>{setCpName(v);setCpId('')}} placeholder='ТОО "Компания" / ИП Иванов' C={C}/>
-            <div style={{display:'flex',gap:7}}>
+            <div style={{display:'flex',gap:7,marginTop:8}}>
               <SBtn onClick={()=>setStep(1)} C={C} style={{flex:1}}>← Назад</SBtn>
               <Btn onClick={()=>cpName&&setStep(3)} disabled={!cpName} style={{flex:2}}>Далее →</Btn>
             </div>
@@ -989,17 +1004,33 @@ function NewDocScreen({C,company,cpList,nomList,initType,onBack,onSaved}){
         {step===3&&(
           <>
             <Sec C={C}>Товары / Услуги</Sec>
+            {nomList.length===0&&(
+              <div style={{background:C.card2,borderRadius:12,padding:'16px',textAlign:'center',marginBottom:12}}>
+                <p style={{color:C.muted,fontSize:12,margin:'0 0 4px'}}>У вас нет номенклатуры</p>
+                <p style={{color:C.muted,fontSize:10,margin:0}}>Сначала добавьте товары/услуги в раздел «Номенклатура»</p>
+              </div>
+            )}
+            {nomList.length>0&&rows.length===0&&(
+              <p style={{color:C.muted,fontSize:11,margin:'0 0 8px'}}>Выберите позиции из номенклатуры:</p>
+            )}
+            {nomList.length>0&&(
+              <div style={{marginBottom:10}}>
+                <p style={{color:C.muted,fontSize:9,fontWeight:700,margin:'0 0 6px',textTransform:'uppercase'}}>Добавить из номенклатуры:</p>
+                <div style={{display:'flex',flexWrap:'wrap',gap:5,marginBottom:8}}>
+                  {nomList.map(n=>(
+                    <button key={n.id} onClick={()=>setRows(r=>[...r,{name:n.name,qty:1,unit:n.unit,price:String(n.price),nds_rate:n.nds_rate}])}
+                      style={{padding:'6px 12px',borderRadius:10,border:`1.5px solid ${C.border}`,background:C.card2,color:C.text,fontSize:10,fontWeight:500,cursor:'pointer'}}>
+                      + {n.name} ({n.price?fmt(n.price):'цена не указана'})
+                    </button>
+                  ))}
+                </div>
+              </div>
+            )}
             {rows.map((row,i)=>(
-              <div key={i} style={{background:C.card2,borderRadius:12,padding:'10px',marginBottom:8,border:`1px solid ${C.border}`}}>
-                <div style={{display:'flex',gap:6,marginBottom:6}}>
-                  <div style={{flex:1}}>
-                    <p style={{color:C.muted,fontSize:8,margin:'0 0 3px',textTransform:'uppercase'}}>Наименование *</p>
-                    <input value={row.name} onChange={e=>updRow(i,'name',e.target.value)} placeholder="Услуга/товар"
-                      list={`nom-${i}`}
-                      style={{width:'100%',background:C.inputBg,border:`1px solid ${C.border}`,borderRadius:9,padding:'8px 10px',color:C.text,fontSize:12,outline:'none',boxSizing:'border-box',fontFamily:'inherit'}}/>
-                    <datalist id={`nom-${i}`}>{nomList.map(n=><option key={n.id} value={n.name}/>)}</datalist>
-                  </div>
-                  {rows.length>1&&<button onClick={()=>removeRow(i)} style={{background:'rgba(239,68,68,.1)',border:'none',borderRadius:9,padding:'0 10px',cursor:'pointer',color:C.red,fontSize:14,flexShrink:0,marginTop:15}}>✕</button>}
+              <div key={i} style={{background:C.card2,borderRadius:12,padding:'10px',marginBottom:8,border:`1px solid ${C.p}33`}}>
+                <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:6}}>
+                  <p style={{color:C.text,fontSize:11,fontWeight:600,margin:0}}>{row.name}</p>
+                  <button onClick={()=>removeRow(i)} style={{background:'rgba(239,68,68,.1)',border:'none',borderRadius:8,padding:'3px 8px',cursor:'pointer',color:C.red,fontSize:12}}>✕</button>
                 </div>
                 <div style={{display:'grid',gridTemplateColumns:'1fr 1fr 1fr 1fr',gap:6}}>
                   <div>
@@ -1030,7 +1061,6 @@ function NewDocScreen({C,company,cpList,nomList,initType,onBack,onSaved}){
                 {Number(row.price)>0&&<p style={{color:C.muted,fontSize:9,margin:'6px 0 0',textAlign:'right'}}>Итого: {fmt(Number(row.price)*Number(row.qty))}</p>}
               </div>
             ))}
-            <button onClick={addRow} style={{width:'100%',padding:'9px',borderRadius:11,background:'transparent',border:`1.5px dashed ${C.border}`,color:C.muted,fontSize:12,cursor:'pointer',marginBottom:10}}>+ Добавить строку</button>
             {totalAmt>0&&(
               <div style={{background:C.pSoft,borderRadius:13,padding:'12px',marginBottom:10,border:`1px solid ${C.border}`}}>
                 {totalNds>0&&<div style={{display:'flex',justifyContent:'space-between',marginBottom:4}}><span style={{color:C.muted,fontSize:11}}>Без НДС:</span><span style={{color:C.text,fontSize:11,fontWeight:600}}>{fmt(totalAmt-totalNds)}</span></div>}
@@ -1051,7 +1081,7 @@ function NewDocScreen({C,company,cpList,nomList,initType,onBack,onSaved}){
 }
 
 // ─── DOC DETAIL ───────────────────────────────────────────────────
-function DocDetailScreen({C,doc,onBack,onUpdate,company}){
+function DocDetailScreen({C,doc,onBack,onUpdate,company,nav,cpList,nomList}){
   const [loading,setLoading]=useState(false)
   if(!doc) return null
   const items=doc.items||[]
@@ -1059,6 +1089,24 @@ function DocDetailScreen({C,doc,onBack,onUpdate,company}){
   async function updatePayStatus(status){
     setLoading(true)
     await documents.update(doc.id,{pay_status:status})
+    // Синхронизируем статус оплаты всех связанных документов
+    const allDocs=await documents.list(doc.company_id)
+    if(allDocs&&allDocs.data){
+      const linked=allDocs.data.filter(d=>d.linked_doc_id===doc.id)
+      for(const d of linked){
+        await documents.update(d.id,{pay_status:status})
+      }
+    }
+    setLoading(false)
+    onUpdate()
+  }
+  async function updateShipStatus(shipStatus){
+    setLoading(true)
+    await documents.update(doc.id,{ship_status:shipStatus})
+    // Обновляем статус отгрузки родительского счёта
+    if(doc.linked_doc_id){
+      await documents.update(doc.linked_doc_id,{ship_status:shipStatus})
+    }
     setLoading(false)
     onUpdate()
   }
@@ -1124,8 +1172,35 @@ function DocDetailScreen({C,doc,onBack,onUpdate,company}){
               <button key={v} onClick={()=>updatePayStatus(v)} disabled={loading}
                 style={{padding:'5px 11px',borderRadius:10,border:`1.5px solid ${doc.pay_status===v?col:C.border}`,background:doc.pay_status===v?bg:'transparent',color:doc.pay_status===v?col:C.muted,fontSize:10,fontWeight:doc.pay_status===v?700:400,cursor:'pointer'}}>{l}</button>
             ))}
+            <div style={{width:'100%',marginTop:6,display:'flex',gap:5,flexWrap:'wrap'}}>
+              {[['not_shipped','📦 Не отгружен','rgba(100,116,139,.13)',C.muted],['partial','🚚 Частично отгружен','rgba(245,158,11,.13)',C.gold],['shipped','✅ Отгружен','rgba(34,197,94,.13)',C.green]].map(([v,l,bg,col])=>(
+                <button key={v} onClick={()=>updateShipStatus(v)} disabled={loading}
+                  style={{padding:'5px 11px',borderRadius:10,border:`1.5px solid ${(doc.ship_status||'not_shipped')===v?col:C.border}`,background:(doc.ship_status||'not_shipped')===v?bg:'transparent',color:(doc.ship_status||'not_shipped')===v?col:C.muted,fontSize:10,fontWeight:(doc.ship_status||'not_shipped')===v?700:400,cursor:'pointer'}}>{l}</button>
+              ))}
+            </div>
           </div>
         </div>
+        {/* Цепочка документов */}
+        {(doc.type==='invoice'||doc.type==='avr')&&(
+          <div style={{marginBottom:8}}>
+            <p style={{color:C.muted,fontSize:9,fontWeight:700,margin:'0 0 6px',textTransform:'uppercase'}}>📎 Создать на основе документа</p>
+            <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:7}}>
+              {doc.type==='invoice'&&<button onClick={()=>nav('newDoc',{type:'avr',initCp:{id:doc.counterparty_id,name:doc.counterparty_name},initRows:doc.items,linkedDocId:doc.id})}
+                style={{padding:'10px',borderRadius:12,background:'rgba(34,197,94,.12)',border:'1px solid rgba(34,197,94,.25)',color:C.green,fontSize:11,fontWeight:600,cursor:'pointer'}}>
+                ✅ Создать АВР
+              </button>}
+              <button onClick={()=>nav('newDoc',{type:'sf',initCp:{id:doc.counterparty_id,name:doc.counterparty_name},initRows:doc.items,linkedDocId:doc.id})}
+                style={{padding:'10px',borderRadius:12,background:'rgba(245,158,11,.12)',border:'1px solid rgba(245,158,11,.25)',color:C.gold,fontSize:11,fontWeight:600,cursor:'pointer'}}>
+                🧾 Создать СФ
+              </button>
+            </div>
+          </div>
+        )}
+        {doc.linked_doc_id&&(
+          <div style={{background:C.card2,borderRadius:10,padding:'8px 12px',marginBottom:8,border:`1px solid ${C.border}`}}>
+            <p style={{color:C.muted,fontSize:9,margin:0}}>🔗 Связан со счётом</p>
+          </div>
+        )}
         {/* Actions */}
         <button onClick={()=>generatePDF(doc,company)}
           style={{width:'100%',padding:'12px',borderRadius:12,background:'rgba(124,111,255,.12)',border:'1px solid rgba(124,111,255,.3)',color:C.p,fontSize:12,fontWeight:700,cursor:'pointer',marginBottom:8}}>
@@ -1749,8 +1824,8 @@ export default function App(){
 
   // Render content
   const renderContent=()=>{
-    if(screen==='newDoc') return <NewDocScreen C={C} company={company} cpList={cpList} nomList={nomList} initType={screenParams.type} onBack={()=>nav('docs')} onSaved={()=>{loadAll();nav('docs')}}/>
-    if(screen==='docDetail') return <DocDetailScreen C={C} doc={screenParams.doc} company={company} onBack={()=>nav('docs')} onUpdate={loadAll}/>
+    if(screen==='newDoc') return <NewDocScreen C={C} company={company} cpList={cpList} nomList={nomList} initType={screenParams.type} initCp={screenParams.initCp} initRows={screenParams.initRows} linkedDocId={screenParams.linkedDocId} onBack={()=>nav('docs')} onSaved={()=>{loadAll();nav('docs')}}/>
+    if(screen==='docDetail') return <DocDetailScreen C={C} doc={screenParams.doc} company={company} onBack={()=>nav('docs')} onUpdate={loadAll} nav={nav} cpList={cpList} nomList={nomList}/>
     if(screen==='docs') return <DocsScreen C={C} company={company} docs={docs} nav={nav} onRefresh={loadAll}/>
     if(screen==='counterparties') return <CpScreen C={C} company={company} cpList={cpList} onRefresh={loadAll}/>
     if(screen==='nomenclature') return <NomScreen C={C} company={company} nomList={nomList} onRefresh={loadAll}/>
