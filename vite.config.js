@@ -7,6 +7,7 @@ export default defineConfig({
     react(),
     VitePWA({
       registerType: 'autoUpdate',
+      workbox: { skipWaiting: true, clientsClaim: true, cacheId: 'bizbook-v2' },
       manifest: {
         name: 'BizBook KZ',
         short_name: 'BizBook KZ',

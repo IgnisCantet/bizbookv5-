@@ -3,8 +3,56 @@
  * © 2026 ТОО «NOVA Comp». Все права защищены.
  */
 import { useState, useEffect, useRef, useCallback } from 'react'
-import { auth, profiles, companies, tariffs, counterparties, nomenclature, documents } from './lib/supabase.js'
+import { supabase, auth, profiles, companies, tariffs, tariffRequests, counterparties, nomenclature, documents } from './lib/supabase.js'
 import { MRP, MZP, calcSalary } from './data/constants.js'
+
+
+
+function validateIIN(iin) {
+  if (!iin || iin.length !== 12 || !/^\d{12}$/.test(iin)) return false
+  const w1 = [1,2,3,4,5,6,7,8,9,10,11]
+  const w2 = [3,4,5,6,7,8,9,10,11,1,2]
+  const d = iin.split('').map(Number)
+  let s = 0
+  for (let i = 0; i < 11; i++) s += d[i] * w1[i]
+  let r = s % 11
+  if (r === 10) {
+    s = 0
+    for (let i = 0; i < 11; i++) s += d[i] * w2[i]
+    r = s % 11
+  }
+  return r === d[11]
+}
+function getIINError(iin, type) {
+  if (!iin) return ''
+  if (!/^\d+$/.test(iin)) return 'Только цифры'
+  if (iin.length < 12) return `Введите ещё ${12 - iin.length} цифр`
+  if (iin.length > 12) return 'Не более 12 цифр'
+  if (!validateIIN(iin)) return type === 'ip' ? 'Неверный ИИН. Проверьте правильность' : 'Неверный БИН. Проверьте правильность'
+  return ''
+}
+function IINInput({label, value, onChange, type, C, required}) {
+  const err = getIINError(value, type)
+  const ok = value && value.length === 12 && !err
+  return (
+    <div style={{marginBottom:12}}>
+      {label && <p style={{color:C.muted,fontSize:9,fontWeight:700,margin:'0 0 4px',textTransform:'uppercase',letterSpacing:.6}}>{label}{required && <span style={{color:C.red}}> *</span>}</p>}
+      <div style={{position:'relative'}}>
+        <input
+          value={value||''}
+          onChange={e=>onChange(e.target.value.replace(/\D/g,'').slice(0,12))}
+          placeholder={type==='ip'?'ИИН (12 цифр)':'БИН (12 цифр)'}
+          type="tel"
+          style={{width:'100%',background:C.inputBg,border:`1.5px solid ${err&&value&&value.length===12?C.red:ok?C.green:C.border2}`,borderRadius:12,padding:'11px 40px 11px 14px',color:C.text,fontSize:13,outline:'none',boxSizing:'border-box',fontFamily:'inherit'}}
+        />
+        {ok && <span style={{position:'absolute',right:12,top:'50%',transform:'translateY(-50%)',color:C.green,fontSize:16}}>✓</span>}
+        {err && value && value.length===12 && <span style={{position:'absolute',right:12,top:'50%',transform:'translateY(-50%)',color:C.red,fontSize:16}}>✗</span>}
+      </div>
+      {err && value && value.length>0 && <p style={{color:C.red,fontSize:10,margin:'4px 0 0'}}>{err}</p>}
+      {ok && <p style={{color:C.green,fontSize:10,margin:'4px 0 0'}}>✅ {type==='ip'?'ИИН':'БИН'} корректен</p>}
+    </div>
+  )
+}
 
 // ─── THEME ───────────────────────────────────────────────────────
 const DARK = {
@@ -79,13 +127,21 @@ const Btn=({children,onClick,col,style={},disabled,loading})=>(
 const SBtn=({children,onClick,C,style={}})=>(
   <button onClick={onClick} style={{padding:'11px 0',borderRadius:13,background:C.card2,border:`1px solid ${C.border}`,color:C.muted,fontSize:12,fontWeight:600,cursor:'pointer',width:'100%',...style}}>{children}</button>
 )
-const Inp=({label,value,onChange,placeholder,type='text',C,required})=>(
+const Inp=({label,value,onChange,placeholder,type='text',C,required})=>{
+  const [showPw,setShowPw]=useState(false)
+  const isPassword=type==='password'
+  return(
   <div style={{marginBottom:12}}>
     {label&&<p style={{color:C.muted,fontSize:9,fontWeight:700,margin:'0 0 4px',textTransform:'uppercase',letterSpacing:.6}}>{label}{required&&<span style={{color:C.red}}> *</span>}</p>}
-    <input value={value||''} onChange={e=>onChange&&onChange(e.target.value)} placeholder={placeholder} type={type}
-      style={{width:'100%',background:C.inputBg,border:`1px solid ${C.border2}`,borderRadius:12,padding:'11px 14px',color:C.text,fontSize:13,outline:'none',boxSizing:'border-box',fontFamily:'inherit'}}/>
+    <div style={{position:'relative'}}>
+      <input value={value||''} onChange={e=>onChange&&onChange(e.target.value)} placeholder={placeholder} type={isPassword?(showPw?'text':'password'):type}
+        style={{width:'100%',background:C.inputBg,border:`1px solid ${C.border2}`,borderRadius:12,padding:isPassword?'11px 40px 11px 14px':'11px 14px',color:C.text,fontSize:13,outline:'none',boxSizing:'border-box',fontFamily:'inherit'}}/>
+      {isPassword&&<button type="button" onClick={()=>setShowPw(!showPw)} style={{position:'absolute',right:12,top:'50%',transform:'translateY(-50%)',background:'none',border:'none',cursor:'pointer',fontSize:16,color:C.muted,padding:0}}>
+        {showPw?'🙈':'👁️'}
+      </button>}
+    </div>
   </div>
-)
+)}
 const Sel=({label,value,onChange,options,C})=>(
   <div style={{marginBottom:12}}>
     {label&&<p style={{color:C.muted,fontSize:9,fontWeight:700,margin:'0 0 4px',textTransform:'uppercase',letterSpacing:.6}}>{label}</p>}
@@ -123,6 +179,8 @@ function Sidebar({screen,nav,C,mode,setMode,lang,setLang,profile,isAdmin,onLogou
     ['home','🏠','Главная'],['docs','📁','Документы'],
     ['counterparties','👥','Контрагенты'],['nomenclature','📦','Номенклатура'],
     ['profile','👤','Профиль'],
+    ['tariffs','💳','Тарифы'],
+    ['soon','🚀','Скоро'],
     ...(isAdmin?[['admin','🔧','Панель админа']]:[[]])
   ].filter(x=>x.length>0)
 
@@ -155,11 +213,6 @@ function Sidebar({screen,nav,C,mode,setMode,lang,setLang,profile,isAdmin,onLogou
             <button key={v} onClick={()=>setMode(v)} style={{flex:1,padding:'6px 2px',borderRadius:8,border:`1.5px solid ${mode===v?C.p:C.border}`,background:mode===v?C.pSoft:'transparent',color:mode===v?C.p:C.muted,fontSize:9,fontWeight:600,cursor:'pointer'}}>{ic}</button>
           ))}
         </div>
-        <div style={{display:'flex',gap:4,marginBottom:8}}>
-          {[['ru','🇷🇺 РУС'],['kz','🇰🇿 ҚАЗ']].map(([v,l])=>(
-            <button key={v} onClick={()=>setLang(v)} style={{flex:1,padding:'6px',borderRadius:8,border:`1.5px solid ${lang===v?C.p:C.border}`,background:lang===v?C.pSoft:'transparent',color:lang===v?C.text:C.muted,fontSize:10,fontWeight:600,cursor:'pointer'}}>{l}</button>
-          ))}
-        </div>
         <button onClick={onLogout} style={{width:'100%',padding:'8px',borderRadius:10,background:'rgba(239,68,68,.1)',border:'1px solid rgba(239,68,68,.2)',color:C.red,fontSize:11,fontWeight:600,cursor:'pointer'}}>Выйти →</button>
       </div>
       <div style={{padding:'6px 12px 12px',borderTop:`1px solid ${C.border}`}}>
@@ -184,14 +237,28 @@ function Sidebar({screen,nav,C,mode,setMode,lang,setLang,profile,isAdmin,onLogou
 
 // ─── AUTH SCREEN ──────────────────────────────────────────────────
 function AuthScreen({C}){
-  const [step,setStep]=useState('email')  // email | otp | pin_set
+  const [step,setStep]=useState('login')  // login | email | otp | set_password | restore
+  const [bin,setBin]=useState('')
   const [email,setEmail]=useState('')
   const [otp,setOtp]=useState('')
-  const [pin,setPin]=useState('')
-  const [pinConfirm,setPinConfirm]=useState('')
+  const [password,setPassword]=useState('')
+  const [password2,setPassword2]=useState('')
   const [loading,setLoading]=useState(false)
   const [error,setError]=useState('')
   const [info,setInfo]=useState('')
+  const [foundEmail,setFoundEmail]=useState('')
+
+  async function loginByBin(){
+    if(bin.length<12){setError('Введите ИИН/БИН (12 цифр)');return}
+    if(!password){setError('Введите пароль');return}
+    setLoading(true);setError('')
+    // Ищем email по БИН в базе
+    const{data,error:e}=await supabase.from('profiles').select('email').eq('bin',bin).single()
+    if(e||!data){setLoading(false);setError('ИИН/БИН не найден. Зарегистрируйтесь через Email');return}
+    const{error:e2}=await auth.signInWithPassword(data.email,password)
+    setLoading(false)
+    if(e2){setError('Неверный ИИН/БИН или пароль');return}
+  }
 
   async function sendOtp(){
     if(!email.includes('@')){setError('Введите корректный email');return}
@@ -199,7 +266,7 @@ function AuthScreen({C}){
     const{error:e}=await auth.signInWithOtp(email)
     setLoading(false)
     if(e){setError(e.message);return}
-    setInfo(`Код отправлен на ${email}. Проверьте почту.`)
+    setInfo(`Код отправлен на ${email}`)
     setStep('otp')
   }
 
@@ -208,8 +275,25 @@ function AuthScreen({C}){
     setLoading(true);setError('')
     const{error:e}=await auth.verifyOtp(email,otp)
     setLoading(false)
-    if(e){setError('Неверный код или истёк срок. Запросите новый.');return}
-    // После верификации страница перезагрузится через onAuthStateChange
+    if(e){setError('Неверный код или истёк срок');return}
+    setStep('set_password')
+  }
+
+  async function setNewPassword(){
+    if(!bin||bin.length<12){setError('Введите ИИН/БИН');return}
+    if(password.length<6){setError('Пароль минимум 6 символов');return}
+    if(password!==password2){setError('Пароли не совпадают');return}
+    setLoading(true);setError('')
+    const{error:e}=await auth.updatePassword(password)
+    if(e){setLoading(false);setError(e.message);return}
+    // Сохраняем БИН в профиль
+    const user=await auth.getUser()
+    if(user){
+      await supabase.from('profiles').update({bin}).eq('id',user.id)
+    }
+    setLoading(false)
+    // Сохраняем БИН в localStorage для автозаполнения формы компании
+    localStorage.setItem('reg_bin', bin)
   }
 
   return(
@@ -223,30 +307,52 @@ function AuthScreen({C}){
           <h1 style={{color:C.text,fontSize:22,fontWeight:900,margin:'0 0 5px'}}>BizBook KZ</h1>
           <p style={{color:C.muted,fontSize:12,margin:0}}>Умная бухгалтерия для бизнеса РК</p>
         </div>
-        {/* Form */}
         <div style={{padding:'24px 28px 28px'}}>
+          {step==='login'&&(
+            <>
+              <h2 style={{color:C.text,fontSize:16,fontWeight:700,margin:'0 0 4px'}}>Войти в систему</h2>
+              <p style={{color:C.muted,fontSize:11,margin:'0 0 16px'}}>ИИН/БИН и пароль</p>
+              {error&&<Alert type="error" C={C}>{error}</Alert>}
+              <IINInput label="ИИН / БИН" value={bin} onChange={setBin} type="bin" C={C} required/>
+              <Inp label="Пароль" value={password} onChange={setPassword} placeholder="Введите пароль" type="password" C={C}/>
+              <Btn onClick={loginByBin} loading={loading}>🔑 Войти</Btn>
+              <div style={{display:'flex',justifyContent:'space-between',marginTop:10}}>
+                <button onClick={()=>{setStep('email');setError('')}} style={{background:'none',border:'none',color:C.p,fontSize:11,cursor:'pointer',padding:0}}>Забыли пароль?</button>
+                <button onClick={()=>{setStep('email');setError('')}} style={{background:'none',border:'none',color:C.p,fontSize:11,cursor:'pointer',padding:0}}>Первый вход →</button>
+              </div>
+              <p style={{color:C.dim,fontSize:9,textAlign:'center',marginTop:16}}>© 2026 ТОО «NOVA Comp» · BizBook.kz</p>
+            </>
+          )}
           {step==='email'&&(
             <>
-              <h2 style={{color:C.text,fontSize:16,fontWeight:700,margin:'0 0 6px'}}>Войти в систему</h2>
-              <p style={{color:C.muted,fontSize:11,margin:'0 0 16px',lineHeight:1.5}}>Введите email — пришлём одноразовый код для входа. Пароль не нужен!</p>
+              <button onClick={()=>setStep('login')} style={{background:'none',border:'none',color:C.p,fontSize:12,cursor:'pointer',padding:'0 0 12px',display:'flex',alignItems:'center',gap:4}}>‹ Назад</button>
+              <h2 style={{color:C.text,fontSize:16,fontWeight:700,margin:'0 0 4px'}}>Вход по Email</h2>
+              <p style={{color:C.muted,fontSize:11,margin:'0 0 16px'}}>Первый вход или восстановление пароля</p>
               {error&&<Alert type="error" C={C}>{error}</Alert>}
               <Inp label="Email" value={email} onChange={setEmail} placeholder="your@email.com" type="email" C={C}/>
               <Btn onClick={sendOtp} loading={loading}>📧 Получить код →</Btn>
-              <p style={{color:C.dim,fontSize:9,textAlign:'center',marginTop:12}}>© 2026 ТОО «NOVA Comp» · Все права защищены</p>
             </>
           )}
           {step==='otp'&&(
             <>
               <button onClick={()=>setStep('email')} style={{background:'none',border:'none',color:C.p,fontSize:12,cursor:'pointer',padding:'0 0 12px',display:'flex',alignItems:'center',gap:4}}>‹ Назад</button>
-              <h2 style={{color:C.text,fontSize:16,fontWeight:700,margin:'0 0 6px'}}>Введите код</h2>
+              <h2 style={{color:C.text,fontSize:16,fontWeight:700,margin:'0 0 4px'}}>Введите код</h2>
               {info&&<Alert type="success" C={C}>{info}</Alert>}
               {error&&<Alert type="error" C={C}>{error}</Alert>}
-              <p style={{color:C.muted,fontSize:11,margin:'0 0 16px'}}>6-значный код из письма</p>
-              <Inp label="Код подтверждения" value={otp} onChange={v=>setOtp(v.replace(/\D/,'').slice(0,6))} placeholder="123456" type="tel" C={C}/>
-              <Btn onClick={verifyOtp} loading={loading} disabled={otp.length<6}>✅ Войти</Btn>
-              <button onClick={()=>{sendOtp()}} style={{width:'100%',marginTop:8,padding:'10px',borderRadius:12,background:'transparent',border:`1px solid ${C.border}`,color:C.muted,fontSize:12,cursor:'pointer'}}>
-                Отправить код повторно
-              </button>
+              <Inp label="Код из письма" value={otp} onChange={v=>setOtp(v.replace(/\D/g,'').slice(0,6))} placeholder="123456" type="tel" C={C}/>
+              <Btn onClick={verifyOtp} loading={loading} disabled={otp.length<6}>✅ Подтвердить</Btn>
+              <button onClick={sendOtp} style={{width:'100%',marginTop:8,padding:'10px',borderRadius:12,background:'transparent',border:`1px solid ${C.border}`,color:C.muted,fontSize:12,cursor:'pointer'}}>Отправить повторно</button>
+            </>
+          )}
+          {step==='set_password'&&(
+            <>
+              <h2 style={{color:C.text,fontSize:16,fontWeight:700,margin:'0 0 4px'}}>Последний шаг!</h2>
+              <p style={{color:C.muted,fontSize:11,margin:'0 0 16px'}}>Введите ИИН/БИН и создайте пароль для входа</p>
+              {error&&<Alert type="error" C={C}>{error}</Alert>}
+              <IINInput label="Ваш ИИН (для ИП) или БИН (для ТОО)" value={bin} onChange={setBin} type="bin" C={C} required/>
+              <Inp label="Придумайте пароль" value={password} onChange={setPassword} placeholder="Минимум 6 символов" type="password" C={C}/>
+              <Inp label="Повторите пароль" value={password2} onChange={setPassword2} placeholder="Повторите пароль" type="password" C={C}/>
+              <Btn onClick={setNewPassword} loading={loading} disabled={!bin||bin.length<12||password.length<6||password!==password2}>✅ Сохранить и продолжить</Btn>
             </>
           )}
         </div>
@@ -260,11 +366,11 @@ function CompanyRegister({C,userId,onDone}){
   const [step,setStep]=useState(1)
   const [loading,setLoading]=useState(false)
   const [error,setError]=useState('')
-  const [form,setForm]=useState({
-    name:'',bin:'',type:'too',regime:'our',nds:false,
+  const [form,setForm]=useState(()=>({
+    name:'',bin:localStorage.getItem('reg_bin')||'',type:'too',regime:'our',nds:false,
     address:'',city:'Алматы',director:'',phone:'',email:'',
     bank:'Halyk Bank',bik:'',iik:'',kbe:'17'
-  })
+  }))
   const upd=k=>v=>setForm(f=>({...f,[k]:v}))
 
   async function save(){
@@ -274,7 +380,9 @@ function CompanyRegister({C,userId,onDone}){
     const{data,error:e}=await companies.create({...form,owner_id:userId})
     setLoading(false)
     if(e){setError(e.message);return}
-    onDone(data)
+    await supabase.from('profiles').update({bin:form.bin}).eq('id',userId)
+    localStorage.removeItem('reg_bin')
+    onDone(data, true)
   }
 
   return(
@@ -305,7 +413,7 @@ function CompanyRegister({C,userId,onDone}){
         {step===2&&(
           <>
             <Inp label="Название *" value={form.name} onChange={upd('name')} placeholder='ТОО "Компания"' C={C} required/>
-            <Inp label="БИН * (12 цифр)" value={form.bin} onChange={v=>upd('bin')(v.replace(/\D/,'').slice(0,12))} placeholder="241040014477" type="tel" C={C} required/>
+            <IINInput label="БИН / ИИН *" value={form.bin} onChange={upd('bin')} type={form.type==='ip'?'ip':'bin'} C={C} required/>
             <Inp label="Директор / ФИО ИП" value={form.director} onChange={upd('director')} placeholder="Иванов Иван Иванович" C={C}/>
             <Inp label="Юридический адрес" value={form.address} onChange={upd('address')} placeholder="г. Алматы, ул. ..." C={C}/>
             <Sel label="Налоговый режим" value={form.regime} onChange={upd('regime')} C={C} options={[['our','ОУР (КПН 20%)'],['snr','СНР Упрощёнка (4%)'],['patent','Патент'],['self','Самозанятый']]}/>
@@ -462,6 +570,328 @@ function DocsScreen({C,company,docs,nav,onRefresh}){
     </div>
   )
 }
+
+
+// ─── СУММА ПРОПИСЬЮ ──────────────────────────────────────────────
+function numToWords(n){
+  const ones=['','один','два','три','четыре','пять','шесть','семь','восемь','девять',
+    'десять','одиннадцать','двенадцать','тринадцать','четырнадцать','пятнадцать',
+    'шестнадцать','семнадцать','восемнадцать','девятнадцать']
+  const tens=['','','двадцать','тридцать','сорок','пятьдесят','шестьдесят','семьдесят','восемьдесят','девяносто']
+  const hundreds=['','сто','двести','триста','четыреста','пятьсот','шестьсот','семьсот','восемьсот','девятьсот']
+  function decl(n,f){const v=n%100;if(v>=11&&v<=19)return f[3];const r=n%10;if(r===1)return f[1];if(r>=2&&r<=4)return f[2];return f[3]}
+  function three(n,fem){
+    if(n===0)return''
+    const h=Math.floor(n/100),rest=n%100,t=rest>=20?Math.floor(rest/10):0,o=rest>=20?rest%10:rest
+    const of=fem?['','одна','две','три','четыре','пять','шесть','семь','восемь','девять','десять','одиннадцать','двенадцать','тринадцать','четырнадцать','пятнадцать','шестнадцать','семнадцать','восемнадцать','девятнадцать']:ones
+    return[hundreds[h],tens[t],of[o]].filter(Boolean).join(' ')
+  }
+  n=Math.floor(n);if(n===0)return'ноль'
+  const mil=Math.floor(n/1000000),tho=Math.floor((n%1000000)/1000),rem=n%1000,parts=[]
+  if(mil>0)parts.push(three(mil,false)+' '+decl(mil,['','миллион','миллиона','миллионов']))
+  if(tho>0)parts.push(three(tho,true)+' '+decl(tho,['','тысяча','тысячи','тысяч']))
+  if(rem>0)parts.push(three(rem,false))
+  return parts.join(' ').replace(/\s+/g,' ').trim()
+}
+function amountWords(n){
+  const whole=Math.floor(n),tiyn=Math.round((n-whole)*100)
+  const w=numToWords(whole)
+  return w.charAt(0).toUpperCase()+w.slice(1)+' тенге '+String(tiyn).padStart(2,'0')+' тиын'
+}
+
+// ─── PDF ГЕНЕРАТОР (window.print) ────────────────────────────────
+function generatePDF(doc, company){
+  const items = doc.items||[]
+  const amount = Number(doc.amount||0)
+  const ndsAmount = Number(doc.nds_amount||0)
+  const amountNoNds = amount - ndsAmount
+  const cp = doc.counterparty_name||''
+  const date = doc.date||''
+  const fmtN = n => Number(n||0).toLocaleString('ru-KZ',{minimumFractionDigits:2,maximumFractionDigits:2})
+
+  function itemsRows(){
+    return items.map((r,i)=>{
+      const sum=Number(r.price)*Number(r.qty)
+      return `<tr><td style="text-align:center">${i+1}</td><td>${r.name}</td><td style="text-align:center">${fmtN(r.qty)}</td><td style="text-align:center">${r.unit}</td><td style="text-align:right">${fmtN(Number(r.price))}</td><td style="text-align:right">${fmtN(sum)}</td></tr>`
+    }).join('')
+  }
+  function itemsRowsAvr(){
+    return items.map((r,i)=>{
+      const sum=Number(r.price)*Number(r.qty)
+      return `<tr><td style="text-align:center">${i+1}</td><td>${r.name}</td><td style="text-align:center">${date}</td><td></td><td style="text-align:center">${r.unit}</td><td style="text-align:center">${fmtN(r.qty)}</td><td style="text-align:right">${fmtN(Number(r.price))}</td><td style="text-align:right">${fmtN(sum)}</td></tr>`
+    }).join('')
+  }
+  function itemsRowsSF(){
+    return items.map((r,i)=>{
+      const qty=Number(r.qty),price=Number(r.price),total=qty*price
+      const ndsR=Number(r.nds_rate||0),ndsSum=ndsR>0?Math.round(total*ndsR/116):0,noNds=total-ndsSum
+      return `<tr><td style="text-align:center">${i+1}</td><td>${r.name}</td><td style="text-align:center">${r.unit}</td><td style="text-align:center">—</td><td style="text-align:center">${fmtN(qty)}</td><td style="text-align:right">${fmtN(price)}</td><td style="text-align:right">${fmtN(noNds)}</td><td style="text-align:center">${ndsR?ndsR+'%':'Без НДС'}</td><td style="text-align:right">${ndsR?fmtN(ndsSum):'—'}</td><td style="text-align:right">${fmtN(total)}</td></tr>`
+    }).join('')
+  }
+  function itemsRowsWB(){
+    return items.map((r,i)=>{
+      const qty=Number(r.qty),price=Number(r.price),total=qty*price
+      return `<tr><td style="text-align:center">${i+1}</td><td>${r.name}</td><td style="text-align:center"></td><td style="text-align:center">${r.unit}</td><td style="text-align:center">${fmtN(qty)}</td><td style="text-align:center">${fmtN(qty)}</td><td style="text-align:right">${fmtN(price)}</td><td style="text-align:right">${fmtN(total)}</td><td style="text-align:right">—</td></tr>`
+    }).join('')
+  }
+  function itemsRowsPOA(){
+    return items.map((r,i)=>`<tr><td style="text-align:center">${i+1}</td><td>${r.name}</td><td style="text-align:center">${r.unit}</td><td>${numToWords(Number(r.qty))}</td></tr>`).join('')
+  }
+
+  const BASE = `
+    *{box-sizing:border-box;margin:0;padding:0}
+    body{font-family:Arial,sans-serif;font-size:10pt;color:#000;background:#fff;padding:15mm 15mm 15mm 20mm}
+    table{border-collapse:collapse;width:100%}
+    th,td{border:1px solid #000;padding:3px 5px;vertical-align:middle}
+    th{background:#ececec;font-weight:bold;text-align:center;font-size:9pt}
+    .no-border td,.no-border th{border:none}
+    .right-note{text-align:right;font-size:8pt;line-height:1.5;margin-bottom:4mm}
+    .doc-title{text-align:center;font-size:13pt;font-weight:bold;margin:4mm 0}
+    .kv td:first-child{font-size:9pt;color:#444;width:45mm;border:none;border-bottom:1px solid #999;padding:2px 0}
+    .kv td:last-child{border:none;border-bottom:1px solid #999;font-weight:bold;padding:2px 4px}
+    .party-row{display:grid;grid-template-columns:35mm 1fr;gap:4px;border-bottom:1px solid #999;margin-bottom:3mm;padding-bottom:2mm;font-size:10pt}
+    .party-label{font-size:9pt;color:#444;padding-top:1px}
+    .sign-block{display:flex;gap:8mm;align-items:flex-end;margin-top:6mm}
+    .sign-line{border-bottom:1px solid #000;flex:1;height:10mm}
+    .sign-label{font-size:7pt;color:#555;text-align:center;margin-top:1mm}
+    .mp{font-size:8pt;font-weight:bold;margin-top:2mm}
+    .bin-box{border:1px solid #000;padding:2px 6px;font-weight:bold;font-size:11pt;text-align:center;display:inline-block;min-width:35mm}
+    .italic{font-style:italic;font-size:8pt;color:#555}
+    .total-right{text-align:right;font-weight:bold;padding:3px 5px}
+    @media print{body{padding:10mm 10mm 10mm 15mm}@page{margin:0;size:A4}}
+  `
+
+  let html = ''
+
+  if(doc.type==='invoice'){
+    html = `
+    <div style="background:#f7f7f7;border:1px solid #ccc;padding:4mm;margin-bottom:5mm;font-size:8pt;line-height:1.5">
+      <strong>Внимание!</strong> Оплата данного счёта означает согласие с условиями поставки товара. Уведомление об оплате обязательно, в противном случае не гарантируется наличие товара на складе.<br>
+      <strong>Образец платёжного поручения</strong>
+      <table style="margin-top:2mm;font-size:8pt">
+        <tr>
+          <td>Бенефициар:<br><strong>${company.name}</strong><br>БИН: ${company.bin}</td>
+          <td>ИИК: <strong>${company.iik||''}</strong></td>
+          <td>КБЕ: <strong>${company.kbe||'17'}</strong></td>
+        </tr>
+        <tr>
+          <td>Банк бенефициара:<br><strong>${company.bank||''}</strong></td>
+          <td>БИК: <strong>${company.bik||''}</strong></td>
+          <td>Код назначения платежа: <strong>856</strong></td>
+        </tr>
+      </table>
+    </div>
+    <div class="doc-title">Счёт на оплату № ${doc.number} от ${date} г.</div>
+    <div class="party-row"><span class="party-label">Поставщик:</span><span><strong>БИН/ИИН ${company.bin}, ${company.name},</strong> ${company.address||'г. Алматы'}</span></div>
+    <div class="party-row"><span class="party-label">Покупатель:</span><span><strong>${cp}</strong></span></div>
+    <div style="margin-bottom:4mm;font-size:10pt"><strong>Договор:</strong> Без договора</div>
+    <table style="margin-bottom:3mm">
+      <thead><tr><th style="width:8mm">№</th><th>Наименование</th><th style="width:18mm">Кол-во</th><th style="width:14mm">Ед.</th><th style="width:28mm">Цена</th><th style="width:28mm">Сумма</th></tr></thead>
+      <tbody>${itemsRows()}</tbody>
+      <tfoot><tr><td colspan="5" class="total-right">Итого:</td><td style="text-align:right;font-weight:bold">${fmtN(amount)}</td></tr></tfoot>
+    </table>
+    <div style="margin-bottom:2mm">Всего наименований ${items.length}, на сумму ${fmtN(amount)} KZT</div>
+    <div style="font-weight:bold;margin-bottom:8mm">Всего к оплате: ${amountWords(amount)}</div>
+    <div style="display:flex;align-items:flex-end;gap:4mm">
+      <strong>Исполнитель</strong>
+      <div style="border-bottom:1px solid #000;width:60mm;height:8mm"></div>
+      <span>/${company.director||''}/</span>
+    </div>`
+
+  } else if(doc.type==='avr'){
+    html = `
+    <div class="right-note">Приложение 50 к приказу Министра финансов<br>Республики Казахстан от 20 декабря 2012 года № 562<br><strong>Форма Р-1</strong></div>
+    <div style="display:grid;grid-template-columns:1fr auto;gap:6mm;margin-bottom:4mm">
+      <table class="kv">
+        <tr><td>Заказчик</td><td><strong>${cp}</strong><br><span class="italic">полное наименование, адрес, данные о средствах связи</span></td></tr>
+        <tr><td>Исполнитель</td><td><strong>${company.name}, ${company.address||'г. Алматы'}</strong><br><span class="italic">полное наименование, адрес, данные о средствах связи</span></td></tr>
+        <tr><td>Договор (контракт)</td><td>Без договора</td></tr>
+      </table>
+      <div style="text-align:right;font-size:9pt">
+        ИИН/БИН<br><span class="bin-box">${cp.length>0?'—':''}</span><br><br>
+        ИИН/БИН<br><span class="bin-box">${company.bin}</span>
+      </div>
+    </div>
+    <table style="margin-bottom:4mm">
+      <tr>
+        <td style="font-size:12pt;font-weight:bold;text-align:center;border:none">АКТ ВЫПОЛНЕННЫХ РАБОТ (ОКАЗАННЫХ УСЛУГ)</td>
+        <td style="width:30mm;font-size:9pt"><strong>Номер документа</strong><br>${doc.number}</td>
+        <td style="width:30mm;font-size:9pt"><strong>Дата составления</strong><br>${date}</td>
+      </tr>
+    </table>
+    <table style="margin-bottom:4mm;font-size:9pt">
+      <thead>
+        <tr><th rowspan="2">№ по порядку</th><th rowspan="2">Наименование работ (услуг)</th><th rowspan="2">Дата выполнения</th><th rowspan="2">Сведения об отчёте (при наличии)</th><th rowspan="2">Ед. изм.</th><th colspan="3">Выполнено работ (оказано услуг)</th></tr>
+        <tr><th>количество</th><th>цена за единицу</th><th>стоимость</th></tr>
+        <tr><th>1</th><th>2</th><th>3</th><th>4</th><th>5</th><th>6</th><th>7</th><th>8</th></tr>
+      </thead>
+      <tbody>${itemsRowsAvr()}</tbody>
+      <tfoot><tr><td colspan="7" class="total-right">Итого</td><td style="text-align:right;font-weight:bold">${fmtN(amount)}</td></tr></tfoot>
+    </table>
+    <div style="margin-bottom:2mm;font-size:9pt">Сведения об использовании запасов, полученных от заказчика: <span style="border-bottom:1px solid #999;display:inline-block;width:60mm">&nbsp;</span></div>
+    <div style="margin-bottom:6mm;font-size:9pt">Приложение: на <span style="border-bottom:1px solid #999;display:inline-block;width:20mm">&nbsp;</span> страниц</div>
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:8mm">
+      <div>
+        <div style="font-weight:bold;margin-bottom:4mm">Сдал (Исполнитель) &nbsp; Руководитель</div>
+        <div class="sign-block">
+          <div><div class="sign-line"></div><div class="sign-label">должность</div></div>
+          <div><div class="sign-line"></div><div class="sign-label">подпись</div></div>
+          <div><div class="sign-line"></div><div class="sign-label">расшифровка подписи</div></div>
+        </div>
+        <div class="mp">М.П.</div>
+      </div>
+      <div>
+        <div style="font-weight:bold;margin-bottom:4mm">Принял (Заказчик)</div>
+        <div class="sign-block">
+          <div><div class="sign-line"></div><div class="sign-label">должность</div></div>
+          <div><div class="sign-line"></div><div class="sign-label">подпись</div></div>
+          <div><div class="sign-line"></div><div class="sign-label">расшифровка подписи</div></div>
+        </div>
+        <div style="font-size:9pt;margin-top:3mm">Дата подписания (принятия) работ (услуг): ${date}</div>
+        <div class="mp">М.П.</div>
+      </div>
+    </div>`
+
+  } else if(doc.type==='sf'){
+    html = `
+    <div class="doc-title">Счёт-фактура № ${doc.number} от ${date} г.</div>
+    <div style="margin-bottom:3mm">Дата совершения оборота: ${date}</div>
+    <table class="kv" style="margin-bottom:4mm">
+      <tr><td>Поставщик:</td><td><strong>${company.name}</strong></td></tr>
+      <tr><td>ИИН и адрес поставщика:</td><td>БИН: ${company.bin}, ${company.address||'г. Алматы'}</td></tr>
+      <tr><td>ИИК поставщика:</td><td>${company.iik||''}, в банке ${company.bank||''}, БИК ${company.bik||''}</td></tr>
+      <tr><td>Договор (контракт):</td><td>Без договора</td></tr>
+      <tr><td>Условия оплаты:</td><td></td></tr>
+      <tr><td>Пункт назначения:</td><td>${cp}</td></tr>
+      <tr><td>Поставка по доверенности:</td><td>Без доверенности</td></tr>
+      <tr><td>Способ отправления:</td><td>99 (Прочие)</td></tr>
+      <tr><td>Товарно-транспортная накладная:</td><td></td></tr>
+      <tr><td>Грузоотправитель:</td><td>БИН: ${company.bin}, ${company.name}, ${company.address||'г. Алматы'}</td></tr>
+      <tr><td>Грузополучатель:</td><td>${cp}</td></tr>
+      <tr><td>Получатель:</td><td><strong>${cp}</strong></td></tr>
+    </table>
+    <table style="margin-bottom:4mm;font-size:8.5pt">
+      <thead>
+        <tr><th>№</th><th>Наименование товаров (работ, услуг)</th><th>Ед.</th><th>ТНВЭД</th><th>Кол-во</th><th>Цена (KZT)</th><th>Стоимость без НДС</th><th>НДС ставка</th><th>НДС сумма</th><th>Всего</th></tr>
+        <tr><th>1</th><th>2</th><th>3</th><th>4</th><th>5</th><th>6</th><th>7</th><th>8</th><th>9</th><th>10</th></tr>
+      </thead>
+      <tbody>${itemsRowsSF()}</tbody>
+      <tfoot>
+        <tr><td colspan="6" class="total-right">Всего по счёту:</td><td style="text-align:right;font-weight:bold">${fmtN(amountNoNds)}</td><td></td><td style="text-align:right;font-weight:bold">${fmtN(ndsAmount)}</td><td style="text-align:right;font-weight:bold">${fmtN(amount)}</td></tr>
+      </tfoot>
+    </table>
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:8mm;margin-bottom:4mm">
+      <div>
+        <div>Руководитель: <strong>${company.director||''}</strong> &nbsp; <span style="border-bottom:1px solid #000;display:inline-block;width:30mm">&nbsp;</span></div>
+        <div style="font-size:8pt;color:#555;margin-top:1mm">ВЫДАЛ (ответственное лицо поставщика)</div>
+        <div style="margin-top:2mm">Руководитель<br><span style="border-bottom:1px solid #000;display:inline-block;width:50mm">&nbsp;</span></div>
+        <div style="font-size:7.5pt;color:#555">(Ф.И.О., подпись) &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; (должность)</div>
+      </div>
+      <div>
+        <div>Главный бухгалтер: Не предусмотрен</div>
+        <div style="margin-top:8mm"><span style="border-bottom:1px solid #000;display:inline-block;width:50mm">&nbsp;</span></div>
+        <div style="font-size:7.5pt;color:#555">(Ф.И.О., подпись)</div>
+      </div>
+    </div>
+    <div style="font-size:8pt;font-style:italic">Примечание: Без печати недействительно. Оригинал (первый экземпляр) — покупателю. Копия — поставщику.</div>
+    <div class="mp" style="margin-top:2mm">М.П.</div>`
+
+  } else if(doc.type==='waybill'){
+    const totalQty = items.reduce((s,r)=>s+Number(r.qty),0)
+    html = `
+    <div style="margin-bottom:2mm">Организация (индивидуальный предприниматель) &nbsp; <strong>${company.name}</strong></div>
+    <div class="right-note">Приложение 26 к приказу Министра финансов РК от 20 декабря 2012 года № 562<br><strong>Форма З-2</strong> &nbsp;&nbsp; ИИН/БИН <strong>${company.bin}</strong> &nbsp;&nbsp; Номер: <strong>${doc.number}</strong> &nbsp;&nbsp; Дата: <strong>${date}</strong></div>
+    <div class="doc-title">НАКЛАДНАЯ НА ОТПУСК ЗАПАСОВ НА СТОРОНУ</div>
+    <table style="margin-bottom:4mm;font-size:9pt">
+      <thead><tr><th>Организация — отправитель</th><th>Организация — получатель</th><th>Ответственный (Ф.И.О.)</th><th>ТТН (номер, дата)</th></tr></thead>
+      <tbody><tr><td>${company.name}</td><td>${cp}</td><td style="text-align:center">${company.director||''}</td><td></td></tr></tbody>
+    </table>
+    <table style="margin-bottom:4mm;font-size:9pt">
+      <thead>
+        <tr><th rowspan="2">№ по порядку</th><th rowspan="2">Наименование, характеристика</th><th rowspan="2">Номенкл. №</th><th rowspan="2">Ед. изм.</th><th colspan="2">Количество</th><th rowspan="2">Цена за единицу, KZT</th><th rowspan="2">Сумма с НДС, KZT</th><th rowspan="2">Сумма НДС, KZT</th></tr>
+        <tr><th>подлежит отпуску</th><th>отпущено</th></tr>
+        <tr><th>1</th><th>2</th><th>3</th><th>4</th><th>5</th><th>6</th><th>7</th><th>8</th><th>9</th></tr>
+      </thead>
+      <tbody>${itemsRowsWB()}</tbody>
+      <tfoot><tr><td colspan="4" class="total-right">Итого</td><td style="text-align:center;font-weight:bold">${fmtN(totalQty)}</td><td style="text-align:center;font-weight:bold">${fmtN(totalQty)}</td><td style="text-align:center">×</td><td style="text-align:right;font-weight:bold">${fmtN(amount)}</td><td></td></tr></tfoot>
+    </table>
+    <div style="margin-bottom:2mm">Всего отпущено (прописью): <strong>${numToWords(totalQty)}</strong></div>
+    <div style="margin-bottom:6mm;font-weight:bold">на сумму (прописью): ${amountWords(amount)}</div>
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:8mm">
+      <div>
+        <div style="font-weight:bold">Отпуск разрешил &nbsp; Руководитель</div>
+        <div class="sign-block">
+          <div><div class="sign-line"></div><div class="sign-label">должность</div></div>
+          <div><div class="sign-line"></div><div class="sign-label">подпись</div></div>
+          <div><div class="sign-line"></div><div class="sign-label">расшифровка</div></div>
+        </div>
+        <div style="margin-top:3mm;font-size:9pt">Главный бухгалтер <span style="border-bottom:1px solid #000;display:inline-block;width:15mm">&nbsp;</span> / Не предусмотрен</div>
+        <div class="mp">М.П.</div>
+        <div style="margin-top:4mm;font-size:9pt">Отпустил <span style="border-bottom:1px solid #000;display:inline-block;width:30mm">&nbsp;</span></div>
+      </div>
+      <div>
+        <div style="font-size:9pt">По доверенности № <span style="border-bottom:1px solid #000;display:inline-block;width:15mm">&nbsp;</span> от "<span style="border-bottom:1px solid #000;display:inline-block;width:8mm">&nbsp;</span>" <span style="border-bottom:1px solid #000;display:inline-block;width:20mm">&nbsp;</span> 20__ г.</div>
+        <div style="margin-top:12mm;font-size:9pt">Запасы получил <span style="border-bottom:1px solid #000;display:inline-block;width:30mm">&nbsp;</span></div>
+      </div>
+    </div>`
+
+  } else if(doc.type==='poa'){
+    html = `
+    <div class="right-note">Приложение 6 к приказу Министра финансов Республики Казахстан от 20 декабря 2012 года № 562<br><strong>Форма Д-1</strong></div>
+    <div style="display:grid;grid-template-columns:1fr auto;gap:4mm;margin-bottom:3mm;align-items:center">
+      <div>Организация (индивидуальный предприниматель): <strong>${company.name}</strong></div>
+      <div style="text-align:right;font-size:9pt">ИИН/БИН<br><span class="bin-box">${company.bin}</span></div>
+    </div>
+    <div style="margin-bottom:3mm">Доверенность действительна по: <strong>${date} г.</strong></div>
+    <div style="border:1px solid #000;padding:3mm;margin-bottom:2mm">
+      <div><strong>${company.name}</strong>, БИН/ИИН ${company.bin}, ${company.address||'г. Алматы'}</div>
+      <div class="italic">наименование получателя, ИИН/БИН и его адрес</div>
+      <div style="margin-top:2mm"><strong>${cp}</strong></div>
+      <div class="italic">наименование плательщика, ИИН/БИН и его адрес</div>
+    </div>
+    <div style="margin-bottom:3mm">Счёт № <strong>${company.iik||''}</strong> в <strong>${company.bank||''}</strong><br><span class="italic">наименование банка</span></div>
+    <div class="doc-title">ДОВЕРЕННОСТЬ № ${doc.number}</div>
+    <div style="margin-bottom:4mm">Дата выдачи <strong>${date} г.</strong></div>
+    <table class="kv" style="margin-bottom:4mm">
+      <tr><td>Выдана</td><td><strong>Руководителю, ${company.director||''}</strong><br><span class="italic">должность, фамилия, имя, отчество</span></td></tr>
+      <tr><td>Удостоверение личности (паспорт)</td><td>серии № <span style="border-bottom:1px solid #999;display:inline-block;width:25mm">&nbsp;</span> от <span style="border-bottom:1px solid #999;display:inline-block;width:20mm">&nbsp;</span><br><span class="italic">выдан МВД РЕСПУБЛИКИ КАЗАХСТАН</span></td></tr>
+      <tr><td>На получение от</td><td><strong>${cp}</strong><br><span class="italic">наименование поставщика</span></td></tr>
+      <tr><td>активов по</td><td><span style="border-bottom:1px solid #999;display:inline-block;width:70mm">&nbsp;</span><br><span class="italic">наименование, номер и дата документа</span></td></tr>
+    </table>
+    <table style="margin-bottom:4mm">
+      <thead>
+        <tr><th style="width:12mm">№ по порядку</th><th>Наименование активов</th><th style="width:25mm">Единица измерения</th><th style="width:45mm">Количество (прописью)</th></tr>
+        <tr><th>1</th><th>2</th><th>3</th><th>4</th></tr>
+      </thead>
+      <tbody>${itemsRowsPOA()}<tr><td colspan="4" style="height:10mm"></td></tr></tbody>
+      <tfoot><tr><td colspan="4" class="total-right">Итого</td></tr></tfoot>
+    </table>
+    <div style="margin-bottom:2mm">Подпись лица, получившего доверенность <span style="border-bottom:1px solid #000;display:inline-block;width:40mm">&nbsp;</span></div>
+    <div style="margin-bottom:6mm;font-size:9pt">удостоверяем:</div>
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:8mm">
+      <div>
+        <div style="font-weight:bold">Руководитель организации (индивидуальный предприниматель)</div>
+        <div class="sign-block">
+          <div><div class="sign-line"></div><div class="sign-label">Подпись</div></div>
+          <div><div class="sign-line"></div><div class="sign-label">расшифровка подписи</div></div>
+        </div>
+        <div class="mp">М.П.</div>
+      </div>
+      <div>
+        <div>Главный бухгалтер</div>
+        <div class="sign-block">
+          <div><div class="sign-line"></div><div class="sign-label">Подпись</div></div>
+          <div><div class="sign-line"></div><div class="sign-label">расшифровка подписи</div></div>
+        </div>
+      </div>
+    </div>`
+  }
+
+  const win = window.open('','_blank','width=900,height=700')
+  win.document.write(`<!DOCTYPE html><html><head><meta charset="UTF-8"><title>${doc.number}</title><style>${BASE}</style></head><body>${html}<script>window.onload=function(){window.print()}<\/script></body></html>`)
+  win.document.close()
+}
+
 
 // ─── NEW DOC SCREEN ───────────────────────────────────────────────
 function NewDocScreen({C,company,cpList,nomList,initType,onBack,onSaved}){
@@ -633,7 +1063,8 @@ function DocDetailScreen({C,doc,onBack,onUpdate,company}){
     onUpdate()
   }
 
-  const shareText=`${DOC_TYPES[doc.type]||'Документ'} №${doc.number}\nот ${doc.date}\n\nОт: ${company?.name||''}\nКому: ${doc.counterparty_name||''}\nСумма: ${fmt(Number(doc.amount))}\n${doc.nds_amount>0?`в т.ч. НДС: ${fmt(Number(doc.nds_amount))}\n`:''}\nРеквизиты:\nБанк: ${company?.bank||''}\nИИК: ${company?.iik||''}`
+  const ndsLine=doc.nds_amount>0?('в т.ч. НДС: '+fmt(Number(doc.nds_amount))+'\n'):''
+  const shareText=DOC_TYPES[doc.type]+' №'+doc.number+'\nот '+doc.date+'\n\nОт: '+(company?.name||'')+'\nКому: '+(doc.counterparty_name||'')+'\nСумма: '+fmt(Number(doc.amount))+'\n'+ndsLine+'\nРеквизиты:\nБанк: '+(company?.bank||'')+'\nИИК: '+(company?.iik||'')
 
   return(
     <div style={{flex:1,overflowY:'auto',paddingBottom:24}}>
@@ -696,16 +1127,18 @@ function DocDetailScreen({C,doc,onBack,onUpdate,company}){
           </div>
         </div>
         {/* Actions */}
-        <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:7,marginBottom:8}}>
-          <a href={`https://api.whatsapp.com/send?text=${encodeURIComponent(shareText)}`} target="_blank" rel="noopener noreferrer"
-            style={{display:'block',padding:'11px',borderRadius:12,background:'rgba(37,211,102,.12)',border:'1px solid rgba(37,211,102,.25)',color:'#25d366',fontSize:11,fontWeight:600,cursor:'pointer',textAlign:'center',textDecoration:'none'}}>
-            💬 WhatsApp
-          </a>
-          <a href={`mailto:?subject=${encodeURIComponent(DOC_TYPES[doc.type]+' №'+doc.number)}&body=${encodeURIComponent(shareText)}`}
-            style={{display:'block',padding:'11px',borderRadius:12,background:C.pSoft,border:`1px solid ${C.border}`,color:C.p,fontSize:11,fontWeight:600,cursor:'pointer',textAlign:'center',textDecoration:'none'}}>
-            📧 Email
-          </a>
-        </div>
+        <button onClick={()=>generatePDF(doc,company)}
+          style={{width:'100%',padding:'12px',borderRadius:12,background:'rgba(124,111,255,.12)',border:'1px solid rgba(124,111,255,.3)',color:C.p,fontSize:12,fontWeight:700,cursor:'pointer',marginBottom:8}}>
+          📥 Скачать PDF
+        </button>
+        <a href={`https://api.whatsapp.com/send?text=${encodeURIComponent(shareText)}`} target="_blank" rel="noopener noreferrer"
+          style={{display:'block',padding:'11px',borderRadius:12,background:'rgba(37,211,102,.12)',border:'1px solid rgba(37,211,102,.25)',color:'#25d366',fontSize:11,fontWeight:600,cursor:'pointer',textAlign:'center',textDecoration:'none',marginBottom:7}}>
+          💬 WhatsApp
+        </a>
+        <a href={`mailto:?subject=${encodeURIComponent(DOC_TYPES[doc.type]+' №'+doc.number)}&body=${encodeURIComponent(shareText)}`}
+          style={{display:'block',padding:'11px',borderRadius:12,background:C.pSoft,border:`1px solid ${C.border}`,color:C.p,fontSize:11,fontWeight:600,cursor:'pointer',textAlign:'center',textDecoration:'none',marginBottom:7}}>
+          📧 Email
+        </a>
         <button onClick={async()=>{if(confirm('Удалить документ?')){await documents.delete(doc.id);onBack()}}}
           style={{width:'100%',padding:'10px',borderRadius:12,background:'rgba(239,68,68,.1)',border:'1px solid rgba(239,68,68,.2)',color:C.red,fontSize:11,fontWeight:600,cursor:'pointer'}}>
           🗑 Удалить документ
@@ -888,7 +1321,9 @@ function ProfileScreen({C,profile,company,onLogout}){
           <p style={{color:C.muted,fontSize:8,margin:'0 0 2px'}}>© 2026 ТОО «NOVA Comp». Все права защищены.</p>
           <p style={{color:C.dim,fontSize:7,margin:0}}>Закон РК «Об авторском праве» №6-I · BizBook KZ v5.0</p>
         </div>
-        <button onClick={onLogout} style={{width:'100%',padding:'12px',borderRadius:12,background:'rgba(239,68,68,.1)',border:'1px solid rgba(239,68,68,.2)',color:C.red,fontSize:12,fontWeight:600,cursor:'pointer'}}>
+        <Sec C={C}>Безопасность</Sec>
+        <ChangePasswordBlock C={C}/>
+        <button onClick={onLogout} style={{width:'100%',padding:'12px',borderRadius:12,background:'rgba(239,68,68,.1)',border:'1px solid rgba(239,68,68,.2)',color:C.red,fontSize:12,fontWeight:600,cursor:'pointer',marginTop:8}}>
           Выйти из аккаунта
         </button>
       </div>
@@ -897,7 +1332,7 @@ function ProfileScreen({C,profile,company,onLogout}){
 }
 
 // ─── ADMIN SCREEN ─────────────────────────────────────────────────
-function AdminScreen({C,allCompanies,allTariffs,onRefresh}){
+function AdminScreen({C,allCompanies,allTariffs,allTariffRequests,onRefresh}){
   const [loading,setLoading]=useState(false)
   const [selCo,setSelCo]=useState(null)
   const [tariffId,setTariffId]=useState('')
@@ -924,6 +1359,27 @@ function AdminScreen({C,allCompanies,allTariffs,onRefresh}){
           <p style={{color:C.red,fontSize:11,fontWeight:700,margin:'0 0 2px'}}>🔧 Панель администратора</p>
           <p style={{color:C.muted,fontSize:10,margin:0}}>Видна только тебе · Управление клиентами и тарифами</p>
         </div>
+        {allTariffRequests.filter(r=>r.status==='pending').length>0&&(
+          <>
+            <Sec C={C}>⏳ Заявки на тариф ({allTariffRequests.filter(r=>r.status==='pending').length})</Sec>
+            {allTariffRequests.filter(r=>r.status==='pending').map(req=>(
+              <div key={req.id} style={{background:C.card,borderRadius:13,padding:'12px',marginBottom:8,border:`1.5px solid ${C.gold}40`}}>
+                <p style={{color:C.text,fontSize:12,fontWeight:700,margin:'0 0 2px'}}>{req.companies?.name}</p>
+                <p style={{color:C.muted,fontSize:10,margin:'0 0 6px'}}>БИН: {req.companies?.bin} · Тариф: {req.tariffs?.name} — {req.tariffs?.price_month?.toLocaleString()} ₸/мес</p>
+                <div style={{display:'flex',gap:6}}>
+                  <button onClick={async()=>{await tariffRequests.approve(req.id,req.company_id,req.tariff_id);onRefresh()}}
+                    style={{flex:2,padding:'8px',borderRadius:9,background:'rgba(34,197,94,.15)',border:'1px solid rgba(34,197,94,.3)',color:C.green,fontSize:11,fontWeight:700,cursor:'pointer'}}>
+                    ✅ Активировать
+                  </button>
+                  <button onClick={async()=>{await tariffRequests.reject(req.id);onRefresh()}}
+                    style={{flex:1,padding:'8px',borderRadius:9,background:'rgba(239,68,68,.1)',border:'1px solid rgba(239,68,68,.2)',color:C.red,fontSize:11,fontWeight:600,cursor:'pointer'}}>
+                    ❌ Отклонить
+                  </button>
+                </div>
+              </div>
+            ))}
+          </>
+        )}
         <Sec C={C}>Все компании ({allCompanies.length})</Sec>
         {allCompanies.map(co=>(
           <div key={co.id} style={{background:C.card,borderRadius:13,padding:'12px',marginBottom:8,border:`1px solid ${co.status==='active'?`${C.green}30`:co.status==='suspended'?`${C.red}30`:C.border}`}}>
@@ -961,6 +1417,198 @@ function AdminScreen({C,allCompanies,allTariffs,onRefresh}){
   )
 }
 
+
+function SoonScreen({C}) {
+  const integrations = [
+    {icon:'📊',name:'ЭСФ',desc:'Электронные счёт-фактуры через esf.gov.kz',status:'В разработке'},
+    {icon:'✅',name:'ЭАВР',desc:'Электронные акты выполненных работ',status:'В разработке'},
+    {icon:'🏛️',name:'Кабинет налогоплательщика',desc:'Отправка ФНО 200, 300, 100 напрямую в КНП',status:'В разработке'},
+    {icon:'🏦',name:'Halyk Bank',desc:'Синхронизация выписок и платежей',status:'В разработке'},
+    {icon:'💳',name:'Kaspi Bank',desc:'Автоматический учёт поступлений',status:'В разработке'},
+    {icon:'🔐',name:'ЭЦП / eGov QR',desc:'Подписание документов через eGov Mobile и eGov Business',status:'В разработке'},
+    {icon:'📱',name:'SMS уведомления',desc:'OTP и уведомления через казахстанских операторов',status:'В разработке'},
+    {icon:'🤖',name:'ИИ-ассистент',desc:'Умный помощник бухгалтера на базе AI',status:'Планируется'},
+    {icon:'📅',name:'Налоговый календарь',desc:'Напоминания о сроках сдачи отчётов и уплаты налогов',status:'Планируется'},
+    {icon:'📰',name:'Новости и изменения НК РК',desc:'Актуальные изменения в налоговом законодательстве',status:'Планируется'},
+    {icon:'💰',name:'Расчёт заработной платы',desc:'Полный расчёт ЗП с учётом НК РК 2026',status:'Планируется'},
+    {icon:'📦',name:'Склад и остатки',desc:'Учёт товаров и складских остатков',status:'Планируется'},
+    {icon:'📈',name:'Отчёты и аналитика',desc:'Финансовые отчёты, графики, дашборды',status:'Планируется'},
+    {icon:'🏪',name:'App Store / Google Play',desc:'Нативные мобильные приложения',status:'Планируется'},
+    {icon:'🔗',name:'API для партнёров',desc:'Интеграция BizBook.kz с вашими системами',status:'Планируется'},
+  ]
+  return (
+    <div style={{flex:1,overflowY:'auto',paddingBottom:28}}>
+      <div style={{padding:'12px 16px 0'}}>
+        <div style={{background:'linear-gradient(135deg,#1a0f4e,#2d1f8a)',borderRadius:20,padding:'20px',marginBottom:14,border:'1px solid rgba(124,111,255,.3)'}}>
+          <p style={{color:'rgba(255,255,255,.6)',fontSize:10,margin:'0 0 4px',textTransform:'uppercase',letterSpacing:1}}>BizBook.kz · Дорожная карта</p>
+          <h2 style={{color:'#fff',fontSize:20,fontWeight:900,margin:'0 0 6px'}}>Скоро в приложении 🚀</h2>
+          <p style={{color:'rgba(255,255,255,.6)',fontSize:11,margin:0,lineHeight:1.5}}>Мы активно разрабатываем новые функции. Следите за обновлениями!</p>
+        </div>
+        {integrations.map((item,i)=>(
+          <div key={i} style={{background:C.card,borderRadius:13,padding:'12px',marginBottom:8,border:`1px solid ${C.border}`,display:'flex',gap:12,alignItems:'center'}}>
+            <div style={{width:44,height:44,borderRadius:12,background:C.pSoft,display:'flex',alignItems:'center',justifyContent:'center',fontSize:22,flexShrink:0}}>{item.icon}</div>
+            <div style={{flex:1,minWidth:0}}>
+              <p style={{color:C.text,fontSize:12,fontWeight:700,margin:'0 0 2px'}}>{item.name}</p>
+              <p style={{color:C.muted,fontSize:10,margin:'0 0 5px',lineHeight:1.4}}>{item.desc}</p>
+              <span style={{fontSize:9,padding:'2px 8px',borderRadius:8,fontWeight:700,background:item.status==='В разработке'?'rgba(245,158,11,.15)':'rgba(124,111,255,.15)',color:item.status==='В разработке'?'#f59e0b':'#7c6fff'}}>
+                {item.status==='В разработке'?'🔧 В разработке':'📋 Планируется'}
+              </span>
+            </div>
+          </div>
+        ))}
+        <div style={{background:C.card,borderRadius:13,padding:'14px',marginTop:8,border:`1px solid ${C.border}`,textAlign:'center'}}>
+          <p style={{color:C.muted,fontSize:11,margin:'0 0 4px'}}>Есть предложение по функционалу?</p>
+          <a href="mailto:info@bizbook.kz" style={{color:C.p,fontSize:12,fontWeight:600,textDecoration:'none'}}>📧 Написать нам: info@bizbook.kz</a>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+
+function SetupPasswordScreen({C, userId, onDone}) {
+  const [bin, setBin] = useState('')
+  const [password, setPassword] = useState('')
+  const [password2, setPassword2] = useState('')
+  const [loading, setLoading] = useState(false)
+  const [error, setError] = useState('')
+
+  async function save() {
+    if (!bin || bin.length < 12) { setError('Введите ИИН/БИН (12 цифр)'); return }
+    if (password.length < 6) { setError('Пароль минимум 6 символов'); return }
+    if (password !== password2) { setError('Пароли не совпадают'); return }
+    setLoading(true); setError('')
+    try {
+      const { error: e } = await auth.updatePassword(password)
+      if (e) { setLoading(false); setError('Ошибка пароля: ' + e.message); return }
+      const { data:sb } = await auth.getSession()
+      const uid = sb?.session?.user?.id || userId
+      const { error: e2 } = await supabase.from('profiles').update({ bin }).eq('id', uid)
+      if (e2) { setLoading(false); setError('Ошибка сохранения: ' + e2.message); return }
+      localStorage.setItem('reg_bin', bin)
+      setLoading(false)
+      onDone()
+    } catch(err) {
+      setLoading(false)
+      setError('Ошибка: ' + err.message)
+    }
+  }
+
+  return (
+    <div>
+      {error && <Alert type="error" C={C}>{error}</Alert>}
+      <IINInput label="ИИН (для ИП) / БИН (для ТОО)" value={bin} onChange={setBin} type="bin" C={C} required/>
+      <Inp label="Придумайте пароль" value={password} onChange={setPassword} placeholder="Минимум 6 символов" type="password" C={C}/>
+      <Inp label="Повторите пароль" value={password2} onChange={setPassword2} placeholder="Повторите пароль" type="password" C={C}/>
+      <Btn onClick={save} loading={loading} disabled={bin.length<12||password.length<6||password!==password2}>
+        ✅ Сохранить и продолжить
+      </Btn>
+    </div>
+  )
+}
+
+
+function PWAInstallBanner({C}) {
+  const [show, setShow] = useState(false)
+  const [deferredPrompt, setDeferredPrompt] = useState(null)
+
+  useEffect(()=>{
+    // Проверяем не установлено ли уже
+    const isInstalled = window.matchMedia('(display-mode: standalone)').matches
+    const dismissed = localStorage.getItem('pwa_dismissed')
+    if(isInstalled || dismissed) return
+
+    window.addEventListener('beforeinstallprompt', (e)=>{
+      e.preventDefault()
+      setDeferredPrompt(e)
+      setShow(true)
+    })
+
+    // Показываем на iOS тоже (Safari не поддерживает beforeinstallprompt)
+    const isIOS = /iphone|ipad|ipod/.test(navigator.userAgent.toLowerCase())
+    if(isIOS && !isInstalled && !dismissed) setShow(true)
+  },[])
+
+  if(!show) return null
+
+  async function install(){
+    if(deferredPrompt){
+      deferredPrompt.prompt()
+      const{outcome}=await deferredPrompt.userChoice
+      if(outcome==='accepted') setShow(false)
+    }
+  }
+
+  function dismiss(){
+    localStorage.setItem('pwa_dismissed','1')
+    setShow(false)
+  }
+
+  const isIOS = /iphone|ipad|ipod/.test(navigator.userAgent.toLowerCase())
+
+  return(
+    <div style={{position:'fixed',bottom:0,left:0,right:0,zIndex:500,padding:'12px 16px',background:C.card,borderTop:`2px solid ${C.p}`,boxShadow:'0 -4px 20px rgba(0,0,0,.3)'}}>
+      <div style={{display:'flex',gap:12,alignItems:'center',maxWidth:500,margin:'0 auto'}}>
+        <div style={{width:44,height:44,borderRadius:12,background:C.pSoft,display:'flex',alignItems:'center',justifyContent:'center',flexShrink:0}}>
+          <Logo size={32}/>
+        </div>
+        <div style={{flex:1,minWidth:0}}>
+          <p style={{color:C.text,fontSize:12,fontWeight:700,margin:'0 0 2px'}}>Установить BizBook KZ</p>
+          {isIOS?(
+            <p style={{color:C.muted,fontSize:10,margin:0}}>Нажмите <strong>Поделиться</strong> → <strong>На экран Домой</strong></p>
+          ):(
+            <p style={{color:C.muted,fontSize:10,margin:0}}>Работает без интернета · Быстрый доступ</p>
+          )}
+        </div>
+        <div style={{display:'flex',gap:6,flexShrink:0}}>
+          {!isIOS&&<button onClick={install} style={{padding:'7px 14px',borderRadius:10,background:C.p,border:'none',color:'#fff',fontSize:11,fontWeight:700,cursor:'pointer'}}>Установить</button>}
+          <button onClick={dismiss} style={{padding:'7px 10px',borderRadius:10,background:C.card2,border:`1px solid ${C.border}`,color:C.muted,fontSize:11,cursor:'pointer'}}>✕</button>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+
+function ChangePasswordBlock({C}) {
+  const [show, setShow] = useState(false)
+  const [pw, setPw] = useState('')
+  const [pw2, setPw2] = useState('')
+  const [loading, setLoading] = useState(false)
+  const [error, setError] = useState('')
+  const [success, setSuccess] = useState(false)
+
+  async function save() {
+    if(pw.length < 6) { setError('Минимум 6 символов'); return }
+    if(pw !== pw2) { setError('Пароли не совпадают'); return }
+    setLoading(true); setError('')
+    const { error: e } = await auth.updatePassword(pw)
+    setLoading(false)
+    if(e) { setError(e.message); return }
+    setSuccess(true)
+    setPw(''); setPw2('')
+    setTimeout(() => { setSuccess(false); setShow(false) }, 2000)
+  }
+
+  return (
+    <div style={{background:C.card,borderRadius:13,padding:'12px',marginBottom:8,border:`1px solid ${C.border}`}}>
+      <div style={{display:'flex',justifyContent:'space-between',alignItems:'center'}}>
+        <p style={{color:C.text,fontSize:12,fontWeight:600,margin:0}}>🔑 Изменить пароль</p>
+        <button onClick={()=>setShow(!show)} style={{background:'none',border:'none',color:C.p,fontSize:12,cursor:'pointer',fontWeight:600}}>{show?'Скрыть':'Изменить'}</button>
+      </div>
+      {show&&(
+        <div style={{marginTop:10}}>
+          {error&&<Alert type="error" C={C}>{error}</Alert>}
+          {success&&<Alert type="success" C={C}>✅ Пароль изменён!</Alert>}
+          <Inp label="Новый пароль" value={pw} onChange={setPw} placeholder="Минимум 6 символов" type="password" C={C}/>
+          <Inp label="Повторите пароль" value={pw2} onChange={setPw2} placeholder="Повторите пароль" type="password" C={C}/>
+          <Btn onClick={save} loading={loading} disabled={pw.length<6||pw!==pw2}>Сохранить пароль</Btn>
+        </div>
+      )}
+    </div>
+  )
+}
+
 // ─── WATERMARK ───────────────────────────────────────────────────
 const WM=()=><div style={{position:'fixed',bottom:0,right:0,opacity:.013,fontSize:6,color:'#fff',writingMode:'vertical-rl',padding:3,letterSpacing:2,pointerEvents:'none',userSelect:'none',zIndex:9999,lineHeight:1.2}}>{'© 2026 ТОО «NOVA Comp» BizBook KZ v5 Закон РК «Об авторском праве» №6-I '.repeat(6)}</div>
 
@@ -985,6 +1633,7 @@ export default function App(){
   const[nomList,setNomList]=useState([])
   const[allCompanies,setAllCompanies]=useState([])
   const[allTariffs,setAllTariffs]=useState([])
+  const[allTariffRequests,setAllTariffRequests]=useState([])
 
   const isAdmin=profile?.role==='admin'
 
@@ -1032,8 +1681,13 @@ export default function App(){
       setNomList(noms||[])
     }
 
+    // Tariffs for all
+    const{data:tfs}=await tariffs.list()
+    setAllTariffs(tfs||[])
     // Admin data
     if(p?.role==='admin'){
+      const{data:trs}=await tariffRequests.listAll()
+      setAllTariffRequests(trs||[])
       const{data:acs}=await companies.listAll()
       setAllCompanies(acs||[])
       const{data:tfs}=await tariffs.list()
@@ -1058,6 +1712,25 @@ export default function App(){
   // Not authenticated
   if(!user) return <AuthScreen C={C}/>
 
+  // Показываем SetupPassword только если нет bin в профиле
+  const needsPassword = user && profile && !profile.bin
+
+  if(needsPassword) return(
+    <div style={{minHeight:'100vh',background:`radial-gradient(ellipse at 30% 20%,rgba(124,111,255,.2),${C.bg} 65%)`,display:'flex',alignItems:'center',justifyContent:'center',padding:20,fontFamily:'system-ui'}}>
+      <div style={{width:'100%',maxWidth:400,background:C.card,borderRadius:24,padding:'28px',border:`1px solid ${C.border}`}}>
+        <div style={{textAlign:'center',marginBottom:20}}>
+          <Logo size={48}/>
+          <h2 style={{color:C.text,fontSize:18,fontWeight:800,margin:'12px 0 4px'}}>Настройка аккаунта</h2>
+          <p style={{color:C.muted,fontSize:12,margin:0}}>Создайте пароль для быстрого входа</p>
+        </div>
+        <SetupPasswordScreen C={C} userId={user.id} onDone={()=>{
+          localStorage.setItem('pw_set_' + user.id, '1')
+          loadAll()
+        }}/>
+      </div>
+    </div>
+  )
+
   // Company registration
   if(!company&&screen!=='register') return(
     <div style={{minHeight:'100vh',background:C.bg,fontFamily:'system-ui,-apple-system,sans-serif',display:'flex',flexDirection:'column'}}>
@@ -1081,8 +1754,10 @@ export default function App(){
     if(screen==='docs') return <DocsScreen C={C} company={company} docs={docs} nav={nav} onRefresh={loadAll}/>
     if(screen==='counterparties') return <CpScreen C={C} company={company} cpList={cpList} onRefresh={loadAll}/>
     if(screen==='nomenclature') return <NomScreen C={C} company={company} nomList={nomList} onRefresh={loadAll}/>
+    if(screen==='tariffs') return <TariffsScreen C={C} company={company} allTariffs={allTariffs} onSelect={(t)=>{alert(`Заявка на тариф «${t.name}» отправлена!\n\nДля активации свяжитесь:\n📞 +7 705 474 1612\n📧 info@bizbook.kz\n\nМы активируем тариф в течение 24 часов.`)}} onBack={()=>nav('home')}/>
+    if(screen==='soon') return <SoonScreen C={C}/>
     if(screen==='profile') return <ProfileScreen C={C} profile={profile} company={company} onLogout={handleLogout}/>
-    if(screen==='admin'&&isAdmin) return <AdminScreen C={C} allCompanies={allCompanies} allTariffs={allTariffs} onRefresh={loadAll}/>
+    if(screen==='admin'&&isAdmin) return <AdminScreen C={C} allCompanies={allCompanies} allTariffs={allTariffs} allTariffRequests={allTariffRequests} onRefresh={loadAll}/>
     return <HomeScreen C={C} company={company} docs={docs} nav={nav}/>
   }
 
@@ -1107,7 +1782,8 @@ export default function App(){
             <div style={{maxWidth:900,margin:'0 auto'}}>{renderContent()}</div>
           </div>
         </div>
-        <WM/>
+        <PWAInstallBanner C={C}/>
+      <WM/>
       </div>
     )
   }
@@ -1119,8 +1795,6 @@ export default function App(){
         {!['newDoc','docDetail'].includes(screen)&&(
           <>
             <div style={{padding:'11px 22px 3px',display:'flex',justifyContent:'space-between',flexShrink:0}}>
-              <span style={{color:C.text,fontSize:11,fontWeight:600}}>9:41</span>
-              <span style={{color:C.text,fontSize:9}}>●●●● WiFi 🔋</span>
             </div>
             <div style={{padding:'8px 16px 0',display:'flex',alignItems:'center',gap:10,flexShrink:0}}>
               <Sidebar screen={screen} nav={nav} C={C} mode={mode} setMode={setMode} lang={lang} setLang={setLang} profile={profile} isAdmin={isAdmin} onLogout={handleLogout} vw={vw}/>
@@ -1134,7 +1808,100 @@ export default function App(){
         )}
         <div style={{flex:1,overflow:'hidden',display:'flex',flexDirection:'column'}}>{renderContent()}</div>
       </div>
+      <PWAInstallBanner C={C}/>
       <WM/>
+    </div>
+  )
+}
+
+// ─── TARIFFS SCREEN ───────────────────────────────────────────────
+function TariffsScreen({C,company,allTariffs,onSelect,onBack}){
+  const [requested,setRequested]=useState({})
+  const [trStatus,setTrStatus]=useState(null)
+
+  useEffect(()=>{
+    if(company?.id){
+      tariffRequests.get(company.id).then(({data})=>{
+        if(data) setTrStatus(data)
+      })
+    }
+  },[company?.id])
+
+  async function handleSelect(t){
+    if(!company?.id) return
+    await tariffRequests.create(company.id, t.id)
+    setTrStatus({tariff_id:t.id,status:'pending',tariffs:t})
+    setRequested(r=>({...r,[t.id]:true}))
+    onSelect&&onSelect(t)
+  }
+  const ICONS=['🚀','💼','⚡','🏆']
+  const COLORS=[C.p,'#22c55e','#f59e0b','#ef4444']
+  return(
+    <div style={{flex:1,overflowY:'auto',paddingBottom:28}}>
+      <div style={{padding:'14px 16px 0',display:'flex',alignItems:'center',gap:10}}>
+        {onBack&&<button onClick={onBack} style={{background:'none',border:'none',cursor:'pointer',color:C.p,fontSize:28,padding:0,lineHeight:1}}>‹</button>}
+        <div>
+          <h2 style={{color:C.text,fontSize:16,fontWeight:800,margin:0}}>Тарифные планы</h2>
+          <p style={{color:C.muted,fontSize:10,margin:0}}>Выберите подходящий план</p>
+        </div>
+      </div>
+      <div style={{padding:'12px 16px 0'}}>
+        {allTariffs.map((t,i)=>{
+          const active=company?.tariff_id===t.id
+          const available=t.is_active
+          const features=Array.isArray(t.features)?t.features:[]
+          return(
+            <div key={t.id} style={{background:C.card,borderRadius:16,padding:'16px',marginBottom:12,border:`1.5px solid ${active?COLORS[i]:available?`${COLORS[i]}40`:C.border}`,position:'relative',overflow:'hidden'}}>
+              {active&&<div style={{position:'absolute',top:10,right:10,background:C.green,borderRadius:10,padding:'2px 10px',fontSize:9,fontWeight:700,color:'#fff'}}>✅ Текущий</div>}
+              {!available&&<div style={{position:'absolute',top:10,right:10,background:C.card2,borderRadius:10,padding:'2px 10px',fontSize:9,fontWeight:700,color:C.muted}}>🔧 В разработке</div>}
+              <div style={{display:'flex',alignItems:'center',gap:10,marginBottom:10}}>
+                <div style={{width:44,height:44,borderRadius:12,background:`${COLORS[i]}18`,display:'flex',alignItems:'center',justifyContent:'center',fontSize:22}}>{ICONS[i]}</div>
+                <div>
+                  <p style={{color:COLORS[i],fontSize:15,fontWeight:800,margin:'0 0 2px'}}>{t.name}</p>
+                  <p style={{color:C.text,fontSize:20,fontWeight:900,margin:0}}>{t.price_month?.toLocaleString('ru-KZ')} <span style={{fontSize:12,color:C.muted}}>₸/мес</span></p>
+                </div>
+              </div>
+              <div style={{marginBottom:12}}>
+                {features.map((f,j)=>(
+                  <div key={j} style={{display:'flex',alignItems:'center',gap:7,marginBottom:5}}>
+                    <span style={{color:available?COLORS[i]:C.dim,fontSize:12}}>✓</span>
+                    <span style={{color:available?C.text:C.muted,fontSize:11}}>{f}</span>
+                  </div>
+                ))}
+              </div>
+              {/* Статус тарифа */}
+              {active&&<div style={{marginBottom:8,padding:'6px 10px',borderRadius:10,background:'rgba(34,197,94,.13)',textAlign:'center'}}><span style={{color:C.green,fontSize:11,fontWeight:700}}>✅ Подключён и активен</span></div>}
+              {(requested[t.id]||trStatus?.tariff_id===t.id)&&!active&&<div style={{marginBottom:8,padding:'6px 10px',borderRadius:10,background:'rgba(245,158,11,.13)',textAlign:'center'}}><span style={{color:C.gold,fontSize:11,fontWeight:700}}>⏳ Ожидает активации</span></div>}
+              {available?(
+                active?(
+                  <div style={{padding:'10px',borderRadius:11,background:`${C.green}15`,textAlign:'center'}}>
+                    <span style={{color:C.green,fontSize:12,fontWeight:700}}>✅ Текущий тариф</span>
+                  </div>
+                ):(requested[t.id]||trStatus?.tariff_id===t.id)?(
+                  <div style={{display:'flex',gap:8}}>
+                    <a href={`https://wa.me/77054741612?text=Хочу оплатить тариф ${t.name} ${t.price_month} тг/мес для BizBook.kz`} target="_blank" rel="noopener noreferrer"
+                      style={{flex:2,display:'block',padding:'11px',borderRadius:12,background:'linear-gradient(135deg,#25d366,#128c7e)',border:'none',color:'#fff',fontSize:12,fontWeight:700,cursor:'pointer',textAlign:'center',textDecoration:'none'}}>
+                      💳 Оплатить
+                    </a>
+                    <button onClick={()=>setRequested(r=>({...r,[t.id]:false}))}
+                      style={{flex:1,padding:'11px',borderRadius:12,background:C.card2,border:`1px solid ${C.border}`,color:C.muted,fontSize:12,fontWeight:600,cursor:'pointer'}}>
+                      Отменить
+                    </button>
+                  </div>
+                ):(
+                  <button onClick={()=>handleSelect(t)} style={{width:'100%',padding:'11px',borderRadius:12,background:`linear-gradient(135deg,${COLORS[i]},${COLORS[i]}bb)`,border:'none',color:'#fff',fontSize:13,fontWeight:700,cursor:'pointer'}}>
+                    Выбрать план →
+                  </button>
+                )
+              ):(
+                <div style={{padding:'10px',borderRadius:11,background:C.card2,textAlign:'center',border:`1px dashed ${C.border}`}}>
+                  <span style={{color:C.muted,fontSize:12,fontWeight:600}}>🔧 Скоро будет доступен</span>
+                </div>
+              )}
+            </div>
+          )
+        })}
+      </div>
     </div>
   )
 }

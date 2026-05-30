@@ -6,6 +6,7 @@ const SUPABASE_KEY = import.meta.env.VITE_SUPABASE_KEY || 'sb_publishable_JsWZaN
 
 export const supabase = createClient(SUPABASE_URL, SUPABASE_KEY)
 
+
 // ─── AUTH ─────────────────────────────────────────────────────────
 export const auth = {
   async signInWithOtp(email) {
@@ -16,6 +17,15 @@ export const auth = {
   },
   async signOut() {
     return supabase.auth.signOut()
+  },
+  async signInWithPassword(email, password) {
+    return supabase.auth.signInWithPassword({ email, password })
+  },
+  async updatePassword(password) {
+    return supabase.auth.updateUser({ password })
+  },
+  async resetPassword(email) {
+    return supabase.auth.resetPasswordForEmail(email, { redirectTo: window.location.origin })
   },
   async getSession() {
     return supabase.auth.getSession()
@@ -91,7 +101,7 @@ export const companies = {
 // ─── TARIFFS ──────────────────────────────────────────────────────
 export const tariffs = {
   async list() {
-    const { data, error } = await supabase.from('tariffs').select('*').eq('is_active', true).order('price_month')
+    const { data, error } = await supabase.from('tariffs').select('*').order('price_month')
     return { data: data || [], error }
   }
 }
@@ -168,5 +178,31 @@ export const documents = {
   async nextNumber(companyId, type) {
     const { data } = await supabase.rpc('next_doc_number', { p_company_id: companyId, p_type: type })
     return data || `${type.toUpperCase()}-0001`
+  }
+}
+
+// ─── TARIFF REQUESTS ──────────────────────────────────────────────────────────
+export const tariffRequests = {
+  async get(companyId) {
+    const { data } = await supabase.from('tariff_requests').select('*, tariffs(name,price_month)').eq('company_id', companyId).order('created_at', {ascending:false}).limit(1).maybeSingle()
+    return { data }
+  },
+  async create(companyId, tariffId) {
+    await supabase.from('tariff_requests').delete().eq('company_id', companyId)
+    const { data, error } = await supabase.from('tariff_requests').insert({ company_id: companyId, tariff_id: tariffId, status: 'pending' }).select().single()
+    return { data, error }
+  },
+  async listAll() {
+    const { data } = await supabase.from('tariff_requests').select('*, companies(name,bin), tariffs(name,price_month)').order('created_at', {ascending:false})
+    return { data: data || [] }
+  },
+  async approve(id, companyId, tariffId) {
+    await supabase.from('companies').update({ tariff_id: tariffId, status: 'active' }).eq('id', companyId)
+    const { data, error } = await supabase.from('tariff_requests').update({ status: 'approved' }).eq('id', id).select().single()
+    return { data, error }
+  },
+  async reject(id) {
+    const { data, error } = await supabase.from('tariff_requests').update({ status: 'rejected' }).eq('id', id).select().single()
+    return { data, error }
   }
 }
