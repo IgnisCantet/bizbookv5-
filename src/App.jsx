@@ -563,6 +563,13 @@ function DocsScreen({C,company,docs,nav,onRefresh}){
               <span style={{fontSize:8,padding:'1px 6px',borderRadius:8,background:doc.direction==='out'?C.pSoft:'rgba(34,197,94,.12)',color:doc.direction==='out'?C.p:C.green,fontWeight:600}}>{doc.direction==='out'?'📤 Исходящий':'📥 Входящий'}</span>
               <span style={{color:C.dim,fontSize:9}}>{doc.date}</span>
               <span style={{fontSize:8,padding:'1px 6px',borderRadius:8,fontWeight:700,background:doc.pay_status==='paid'?'rgba(34,197,94,.13)':doc.pay_status==='partial'?'rgba(245,158,11,.13)':'rgba(239,68,68,.13)',color:doc.pay_status==='paid'?C.green:doc.pay_status==='partial'?C.gold:C.red}}>{doc.pay_status==='paid'?'✅ Оплачен':doc.pay_status==='partial'?'⚡ Частично':'⏳ Не оплачен'}</span>
+              {doc.type==='invoice'&&(()=>{
+                const hasAvr=docs.some(d=>d.linked_doc_id===doc.id&&d.type==='avr')
+                const hasSf=docs.some(d=>d.linked_doc_id===doc.id&&d.type==='sf')
+                if(hasSf&&hasAvr) return <span style={{fontSize:8,padding:'1px 6px',borderRadius:8,fontWeight:700,background:'rgba(34,197,94,.13)',color:C.green}}>✅ Отгружен</span>
+                if(hasAvr) return <span style={{fontSize:8,padding:'1px 6px',borderRadius:8,fontWeight:700,background:'rgba(245,158,11,.13)',color:C.gold}}>🚚 Частично</span>
+                return <span style={{fontSize:8,padding:'1px 6px',borderRadius:8,fontWeight:700,background:'rgba(239,68,68,.13)',color:C.red}}>📦 Не отгружен</span>
+              })()}
               {doc.nds_amount>0&&<span style={{fontSize:8,padding:'1px 6px',borderRadius:8,background:C.gSoft,color:C.gold,fontWeight:600}}>НДС</span>}
             </div>
           </div>
@@ -601,6 +608,17 @@ function amountWords(n){
 }
 
 // ─── PDF ГЕНЕРАТОР (window.print) ────────────────────────────────
+async function generateAndSharePDF(doc, company){
+  const fmtN = n => Number(n||0).toLocaleString('ru-KZ',{minimumFractionDigits:2,maximumFractionDigits:2})
+  const amount = Number(doc.amount||0)
+  generatePDF(doc, company)
+  if(navigator.share){
+    try{
+      const shareText = (DOC_TYPES[doc.type]||'Документ')+' №'+doc.number+' от '+doc.date+'\nСумма: '+fmtN(amount)+' KZT\nОт: '+company.name
+      await navigator.share({title: DOC_TYPES[doc.type]+' №'+doc.number, text: shareText})
+    }catch(e){}
+  }
+}
 function generatePDF(doc, company){
   const items = doc.items||[]
   const amount = Number(doc.amount||0)
@@ -888,9 +906,51 @@ function generatePDF(doc, company){
     </div>`
   }
 
-  const win = window.open('','_blank','width=900,height=700')
-  win.document.write(`<!DOCTYPE html><html><head><meta charset="UTF-8"><title>${doc.number}</title><style>${BASE}</style></head><body>${html}<script>window.onload=function(){window.print()}<\/script></body></html>`)
-  win.document.close()
+  // Кнопки управления — снаружи iframe чтобы работало закрытие
+  const closeBtn = `<button onclick="window.parent.document.getElementById('bbModal').remove()" style="padding:10px 20px;background:#f0f0f0;color:#333;border:none;border-radius:8px;font-size:14px;cursor:pointer;font-family:Arial">✕ Закрыть</button>`
+  const printBtn = `<button onclick="window.print()" style="padding:10px 24px;background:#7c6fff;color:#fff;border:none;border-radius:8px;font-size:14px;font-weight:bold;cursor:pointer;font-family:Arial">📥 Сохранить PDF</button>`
+  const toolbar = `<div style="position:fixed;bottom:0;left:0;right:0;background:#fff;padding:10px 16px;border-top:1px solid #ddd;display:flex;gap:8px;justify-content:center;z-index:999;box-shadow:0 -2px 8px rgba(0,0,0,.1)">${printBtn}${closeBtn}</div>`
+  const fullHtml = `<!DOCTYPE html><html><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=0.6"><title>${doc.number}</title><style>${BASE}body{padding-bottom:70px;zoom:0.75}@media print{.no-print{display:none}}</style></head><body>${html}<div class="no-print" style="position:fixed;bottom:0;left:0;right:0;background:#fff;padding:10px 16px;border-top:1px solid #ddd;display:flex;gap:8px;justify-content:center;z-index:999;box-shadow:0 -2px 8px rgba(0,0,0,.1)">${printBtn}</div></body></html>`
+  // Пробуем window.open (браузер), если заблокировано — показываем внутри
+  const win = window.open('about:blank','_blank')
+  if(win){
+    win.document.write(fullHtml)
+    win.document.close()
+  } else {
+    // PWA — показываем в модальном окне
+    const existing = document.getElementById('bbModal')
+    if(existing) existing.remove()
+    const modal = document.createElement('div')
+    modal.id = 'bbModal'
+    modal.style.cssText = 'position:fixed;top:0;left:0;right:0;bottom:0;background:#f5f5f5;z-index:9999;display:flex;flex-direction:column'
+    // Верхняя панель с кнопками
+    const topBar = document.createElement('div')
+    topBar.style.cssText = 'background:#7c6fff;padding:10px 16px;display:flex;gap:8px;justify-content:space-between;align-items:center;flex-shrink:0'
+        const pdfBtn2 = document.createElement('button')
+    pdfBtn2.textContent = '📥 PDF'
+    pdfBtn2.style.cssText = 'padding:8px 16px;background:#fff;color:#7c6fff;border:none;border-radius:6px;font-size:12px;font-weight:bold;cursor:pointer'
+    const closeBtn2 = document.createElement('button')
+    closeBtn2.textContent = '✕ Закрыть'
+    closeBtn2.style.cssText = 'padding:8px 16px;background:rgba(255,255,255,0.2);color:#fff;border:none;border-radius:6px;font-size:12px;cursor:pointer'
+    closeBtn2.onclick = ()=>document.getElementById('bbModal').remove()
+    const titleSpan = document.createElement('span')
+    titleSpan.textContent = doc.number
+    titleSpan.style.cssText = 'color:#fff;font-size:13px;font-weight:bold'
+    const btnGroup = document.createElement('div')
+    btnGroup.style.cssText = 'display:flex;gap:8px'
+    btnGroup.appendChild(pdfBtn2)
+    btnGroup.appendChild(closeBtn2)
+    topBar.appendChild(titleSpan)
+    topBar.appendChild(btnGroup)
+    const iframe = document.createElement('iframe')
+    iframe.style.cssText = 'flex:1;border:none;background:#fff'
+    iframe.srcdoc = fullHtml
+    // Кнопка печати через iframe
+    topBar.querySelector('button').onclick = ()=>iframe.contentWindow.print()
+    modal.appendChild(topBar)
+    modal.appendChild(iframe)
+    document.body.appendChild(modal)
+  }
 }
 
 
@@ -933,10 +993,41 @@ function NewDocScreen({C,company,cpList,nomList,initType,initCp,initRows,linkedD
       items:rows,notes,status:'draft',pay_status:'unpaid',
       linked_doc_id:linkedDocId||null
     })
-    // Обновляем статус отгрузки родительского документа
+    // Синхронизируем статусы с родительским документом
     if(linkedDocId&&!e){
-      const shipStatus=type==='sf'?'shipped':type==='avr'?'partial':'not_shipped'
-      await documents.update(linkedDocId,{ship_status:shipStatus})
+      // Получаем ВСЕ документы компании
+      const allDocsRes=await documents.list(company.id)
+      const allDocs=allDocsRes?.data||[]
+      const parentDoc=allDocs.find(d=>d.id===linkedDocId)
+      const parentPayStatus=parentDoc?.pay_status||'unpaid'
+
+      if(type==='avr'){
+        // АВР + СО → оба partial
+        await documents.update(linkedDocId,{ship_status:'partial'})
+        // Обновляем сам АВР после создания
+        const{data:avrData}=await documents.list(company.id)
+        const newAvr=avrData?.find(d=>d.linked_doc_id===linkedDocId&&d.type==='avr')
+        if(newAvr?.id) await documents.update(newAvr.id,{ship_status:'partial',pay_status:parentPayStatus!=='unpaid'?parentPayStatus:'unpaid'})
+      }
+      if(type==='sf'){
+        // СФ + АВР + СО → все shipped
+        // 1. Обновляем АВР (прямой родитель)
+        await documents.update(linkedDocId,{ship_status:'shipped'})
+        // 2. Если родитель АВР — обновляем СО
+        if(parentDoc?.linked_doc_id){
+          await documents.update(parentDoc.linked_doc_id,{ship_status:'shipped'})
+        }
+        // 3. Обновляем всю цепочку
+        const rootId=parentDoc?.linked_doc_id||linkedDocId
+        const chain=allDocs.filter(d=>d.id===rootId||d.linked_doc_id===rootId||(d.linked_doc_id&&allDocs.find(p=>p.id===d.linked_doc_id&&(p.id===rootId||p.linked_doc_id===rootId))))
+        for(const d of chain){
+          await documents.update(d.id,{ship_status:'shipped'})
+        }
+        // 4. Обновляем сам СФ — берём самый новый документ
+        const{data:freshDocs}=await documents.list(company.id)
+        const newSf=freshDocs?.sort((a,b)=>new Date(b.created_at)-new Date(a.created_at))[0]
+        if(newSf?.id) await documents.update(newSf.id,{ship_status:'shipped',pay_status:parentPayStatus!=='unpaid'?parentPayStatus:'unpaid'})
+      }
     }
     setLoading(false)
     if(e){setError(e.message);return}
@@ -1018,7 +1109,7 @@ function NewDocScreen({C,company,cpList,nomList,initType,initCp,initRows,linkedD
                 <p style={{color:C.muted,fontSize:9,fontWeight:700,margin:'0 0 6px',textTransform:'uppercase'}}>Добавить из номенклатуры:</p>
                 <div style={{display:'flex',flexWrap:'wrap',gap:5,marginBottom:8}}>
                   {nomList.map(n=>(
-                    <button key={n.id} onClick={()=>setRows(r=>[...r,{name:n.name,qty:1,unit:n.unit,price:String(n.price),nds_rate:n.nds_rate}])}
+                    <button key={n.id} onClick={()=>setRows(r=>{const emptyIdx=r.findIndex(row=>!row.name);if(emptyIdx>=0){const updated=[...r];updated[emptyIdx]={...updated[emptyIdx],name:n.name,unit:n.unit,price:String(n.price),nds_rate:n.nds_rate};return updated}return[...r,{name:n.name,qty:1,unit:n.unit,price:String(n.price),nds_rate:n.nds_rate}]})}
                       style={{padding:'6px 12px',borderRadius:10,border:`1.5px solid ${C.border}`,background:C.card2,color:C.text,fontSize:10,fontWeight:500,cursor:'pointer'}}>
                       + {n.name} ({n.price?fmt(n.price):'цена не указана'})
                     </button>
@@ -1081,34 +1172,57 @@ function NewDocScreen({C,company,cpList,nomList,initType,initCp,initRows,linkedD
 }
 
 // ─── DOC DETAIL ───────────────────────────────────────────────────
-function DocDetailScreen({C,doc,onBack,onUpdate,company,nav,cpList,nomList}){
+function DocDetailScreen({C,doc:initDoc,onBack,onUpdate,setDocs,docs:allDocs,company,nav,cpList,nomList}){
   const [loading,setLoading]=useState(false)
+  const [doc,setDoc]=useState(initDoc)
   if(!doc) return null
   const items=doc.items||[]
 
+  // Находим всю цепочку документов рекурсивно
+  async function getChain(){
+    const res=await documents.list(doc.company_id)
+    const all=res?.data||[]
+    // Поднимаемся до корня
+    let rootId=doc.id
+    let cur=doc
+    while(cur.linked_doc_id){
+      const parent=all.find(d=>d.id===cur.linked_doc_id)
+      if(!parent) break
+      rootId=parent.id
+      cur=parent
+    }
+    // Рекурсивно находим всех потомков
+    function getDescendants(id){
+      const children=all.filter(d=>d.linked_doc_id===id)
+      return[...children,...children.flatMap(ch=>getDescendants(ch.id))]
+    }
+    const root=all.find(d=>d.id===rootId)
+    const descendants=getDescendants(rootId)
+    return{all,rootId,chain:[root,...descendants].filter(Boolean)}
+  }
   async function updatePayStatus(status){
     setLoading(true)
-    await documents.update(doc.id,{pay_status:status})
-    // Синхронизируем статус оплаты всех связанных документов
-    const allDocs=await documents.list(doc.company_id)
-    if(allDocs&&allDocs.data){
-      const linked=allDocs.data.filter(d=>d.linked_doc_id===doc.id)
-      for(const d of linked){
-        await documents.update(d.id,{pay_status:status})
-      }
+    setDoc(d=>({...d,pay_status:status}))
+    const{chain}=await getChain()
+    // Обновляем все документы в цепочке
+    for(const d of chain){
+      await documents.update(d.id,{pay_status:status})
     }
+    // Обновляем локально сразу без перезагрузки
+    const chainIds=chain.map(d=>d.id)
+    if(setDocs) setDocs(prev=>prev.map(d=>chainIds.includes(d.id)?{...d,pay_status:status}:d))
     setLoading(false)
-    onUpdate()
   }
   async function updateShipStatus(shipStatus){
     setLoading(true)
-    await documents.update(doc.id,{ship_status:shipStatus})
-    // Обновляем статус отгрузки родительского счёта
-    if(doc.linked_doc_id){
-      await documents.update(doc.linked_doc_id,{ship_status:shipStatus})
+    setDoc(d=>({...d,ship_status:shipStatus}))
+    const{chain}=await getChain()
+    for(const d of chain){
+      await documents.update(d.id,{ship_status:shipStatus})
     }
+    const chainIds=chain.map(d=>d.id)
+    if(setDocs) setDocs(prev=>prev.map(d=>chainIds.includes(d.id)?{...d,ship_status:shipStatus}:d))
     setLoading(false)
-    onUpdate()
   }
 
   const ndsLine=doc.nds_amount>0?('в т.ч. НДС: '+fmt(Number(doc.nds_amount))+'\n'):''
@@ -1206,15 +1320,9 @@ function DocDetailScreen({C,doc,onBack,onUpdate,company,nav,cpList,nomList}){
           style={{width:'100%',padding:'12px',borderRadius:12,background:'rgba(124,111,255,.12)',border:'1px solid rgba(124,111,255,.3)',color:C.p,fontSize:12,fontWeight:700,cursor:'pointer',marginBottom:8}}>
           📥 Скачать PDF
         </button>
-        <a href={`https://api.whatsapp.com/send?text=${encodeURIComponent(shareText)}`} target="_blank" rel="noopener noreferrer"
-          style={{display:'block',padding:'11px',borderRadius:12,background:'rgba(37,211,102,.12)',border:'1px solid rgba(37,211,102,.25)',color:'#25d366',fontSize:11,fontWeight:600,cursor:'pointer',textAlign:'center',textDecoration:'none',marginBottom:7}}>
-          💬 WhatsApp
-        </a>
-        <a href={`mailto:?subject=${encodeURIComponent(DOC_TYPES[doc.type]+' №'+doc.number)}&body=${encodeURIComponent(shareText)}`}
-          style={{display:'block',padding:'11px',borderRadius:12,background:C.pSoft,border:`1px solid ${C.border}`,color:C.p,fontSize:11,fontWeight:600,cursor:'pointer',textAlign:'center',textDecoration:'none',marginBottom:7}}>
-          📧 Email
-        </a>
-        <button onClick={async()=>{if(confirm('Удалить документ?')){await documents.delete(doc.id);onBack()}}}
+
+
+        <button onClick={async()=>{if(confirm('Удалить документ?')){await documents.delete(doc.id);onBack();setTimeout(()=>onUpdate(),100)}}}
           style={{width:'100%',padding:'10px',borderRadius:12,background:'rgba(239,68,68,.1)',border:'1px solid rgba(239,68,68,.2)',color:C.red,fontSize:11,fontWeight:600,cursor:'pointer'}}>
           🗑 Удалить документ
         </button>
@@ -1703,6 +1811,7 @@ export default function App(){
   const[screen,setScreen]=useState('home')
   const[screenParams,setScreenParams]=useState({})
   const[company,setCompany]=useState(null)
+  const[appLoading,setAppLoading]=useState(true)
   const[docs,setDocs]=useState([])
   const[cpList,setCpList]=useState([])
   const[nomList,setNomList]=useState([])
@@ -1730,11 +1839,12 @@ export default function App(){
 
   // Load profile + data when user changes
   useEffect(()=>{
-    if(!user){setProfile(null);setCompany(null);setDocs([]);setCpList([]);setNomList([]);return}
+    if(!user){setProfile(null);setCompany(null);setDocs([]);setCpList([]);setNomList([]);setAppLoading(false);return}
     loadAll()
   },[user])
 
   async function loadAll(){
+    setAppLoading(true)
     // Profile
     const{data:p}=await profiles.get(user.id)
     setProfile(p)
@@ -1755,6 +1865,7 @@ export default function App(){
       const{data:noms}=await nomenclature.list(co.id)
       setNomList(noms||[])
     }
+    setAppLoading(false)
 
     // Tariffs for all
     const{data:tfs}=await tariffs.list()
@@ -1806,6 +1917,14 @@ export default function App(){
     </div>
   )
 
+  // Показываем спиннер пока данные загружаются
+  if(appLoading) return(
+    <div style={{minHeight:'100vh',background:C.bg,display:'flex',alignItems:'center',justifyContent:'center',flexDirection:'column',gap:12}}>
+      <div style={{width:48,height:48,border:`3px solid ${C.p}`,borderTopColor:'transparent',borderRadius:'50%',animation:'spin 0.8s linear infinite'}}/>
+      <style>{`@keyframes spin{to{transform:rotate(360deg)}}`}</style>
+      <p style={{color:C.muted,fontSize:13}}>Загрузка...</p>
+    </div>
+  )
   // Company registration
   if(!company&&screen!=='register') return(
     <div style={{minHeight:'100vh',background:C.bg,fontFamily:'system-ui,-apple-system,sans-serif',display:'flex',flexDirection:'column'}}>
@@ -1825,7 +1944,7 @@ export default function App(){
   // Render content
   const renderContent=()=>{
     if(screen==='newDoc') return <NewDocScreen C={C} company={company} cpList={cpList} nomList={nomList} initType={screenParams.type} initCp={screenParams.initCp} initRows={screenParams.initRows} linkedDocId={screenParams.linkedDocId} onBack={()=>nav('docs')} onSaved={()=>{loadAll();nav('docs')}}/>
-    if(screen==='docDetail') return <DocDetailScreen C={C} doc={screenParams.doc} company={company} onBack={()=>nav('docs')} onUpdate={loadAll} nav={nav} cpList={cpList} nomList={nomList}/>
+    if(screen==='docDetail') return <DocDetailScreen C={C} doc={screenParams.doc} company={company} onBack={()=>nav('docs')} onUpdate={loadAll} setDocs={setDocs} docs={docs} nav={nav} cpList={cpList} nomList={nomList}/>
     if(screen==='docs') return <DocsScreen C={C} company={company} docs={docs} nav={nav} onRefresh={loadAll}/>
     if(screen==='counterparties') return <CpScreen C={C} company={company} cpList={cpList} onRefresh={loadAll}/>
     if(screen==='nomenclature') return <NomScreen C={C} company={company} nomList={nomList} onRefresh={loadAll}/>
