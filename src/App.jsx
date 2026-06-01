@@ -1346,17 +1346,29 @@ function DocDetailScreen({C,doc:initDoc,onBack,onUpdate,setDocs,docs:allDocs,com
 function CpScreen({C,company,cpList,onRefresh}){
   const [q,setQ]=useState('')
   const [showAdd,setShowAdd]=useState(false)
+  const [editCp,setEditCp]=useState(null)
   const [form,setForm]=useState({name:'',bin:'',type:'client',nds:false,bank:'',iik:'',phone:'',email:'',contact:''})
   const [loading,setLoading]=useState(false)
   const upd=k=>v=>setForm(f=>({...f,[k]:v}))
   const filtered=cpList.filter(c=>c.name.toLowerCase().includes(q.toLowerCase())||c.bin?.includes(q))
 
+  function openEdit(cp){
+    setEditCp(cp)
+    setForm({name:cp.name||'',bin:cp.bin||'',type:cp.type||'client',nds:cp.nds||false,bank:cp.bank||'',iik:cp.iik||'',phone:cp.phone||'',email:cp.email||'',contact:cp.contact||''})
+    setShowAdd(true)
+  }
+
   async function save(){
     if(!form.name){return}
     setLoading(true)
-    await counterparties.create({...form,company_id:company.id})
+    if(editCp){
+      await counterparties.update(editCp.id,{...form})
+    } else {
+      await counterparties.create({...form,company_id:company.id})
+    }
     setLoading(false)
     setShowAdd(false)
+    setEditCp(null)
     setForm({name:'',bin:'',type:'client',nds:false,bank:'',iik:'',phone:'',email:'',contact:''})
     onRefresh()
   }
@@ -1380,6 +1392,7 @@ function CpScreen({C,company,cpList,onRefresh}){
                 {cp.nds&&<span style={{fontSize:8,padding:'1px 6px',borderRadius:8,background:C.gSoft,color:C.gold,fontWeight:600}}>НДС</span>}
               </div>
             </div>
+            <button onClick={()=>openEdit(cp)} style={{background:C.pSoft,border:'none',borderRadius:8,padding:'6px 10px',cursor:'pointer',color:C.p,fontSize:11,flexShrink:0}}>✏️</button>
           </div>
         ))}
         {filtered.length===0&&<p style={{color:C.muted,textAlign:'center',padding:'32px 0',fontSize:12}}>Контрагентов не найдено</p>}
@@ -1389,7 +1402,7 @@ function CpScreen({C,company,cpList,onRefresh}){
         <div style={{position:'fixed',inset:0,background:'rgba(0,0,0,.88)',display:'flex',alignItems:'flex-end',zIndex:200}}>
           <div style={{background:C.card,borderRadius:'22px 22px 0 0',width:'100%',maxHeight:'85vh',display:'flex',flexDirection:'column',padding:'18px 18px 26px',overflow:'hidden'}}>
             <div style={{width:36,height:4,background:C.dim,borderRadius:2,margin:'0 auto 14px'}}/>
-            <h3 style={{color:C.text,fontSize:14,fontWeight:700,margin:'0 0 14px'}}>Добавить контрагента</h3>
+            <h3 style={{color:C.text,fontSize:14,fontWeight:700,margin:'0 0 14px'}}>{editCp?'✏️ Редактировать':'Добавить контрагента'}</h3>
             <div style={{overflowY:'auto',flex:1}}>
               <Inp label="Название *" value={form.name} onChange={upd('name')} placeholder='ТОО "Компания" / ИП Иванов' C={C}/>
               <Inp label="БИН / ИИН" value={form.bin} onChange={v=>upd('bin')(v.replace(/\D/,'').slice(0,12))} placeholder="123456789012" type="tel" C={C}/>
@@ -1405,7 +1418,7 @@ function CpScreen({C,company,cpList,onRefresh}){
               <Inp label="ИИК" value={form.iik} onChange={upd('iik')} placeholder="KZ..." C={C}/>
             </div>
             <div style={{display:'flex',gap:8,marginTop:12,flexShrink:0}}>
-              <SBtn onClick={()=>setShowAdd(false)} C={C} style={{flex:1}}>Отмена</SBtn>
+              <SBtn onClick={()=>{setShowAdd(false);setEditCp(null);setForm({name:'',bin:'',type:'client',nds:false,bank:'',iik:'',phone:'',email:'',contact:''})}} C={C} style={{flex:1}}>Отмена</SBtn>
               <Btn onClick={save} loading={loading} style={{flex:2}}>💾 Сохранить</Btn>
             </div>
           </div>
@@ -1419,17 +1432,29 @@ function CpScreen({C,company,cpList,onRefresh}){
 function NomScreen({C,company,nomList,onRefresh}){
   const [q,setQ]=useState('')
   const [showAdd,setShowAdd]=useState(false)
+  const [editNom,setEditNom]=useState(null)
   const [form,setForm]=useState({name:'',description:'',unit:'усл',price:'',nds_rate:0,category:''})
   const [loading,setLoading]=useState(false)
   const upd=k=>v=>setForm(f=>({...f,[k]:v}))
   const filtered=nomList.filter(n=>n.name.toLowerCase().includes(q.toLowerCase()))
 
+  function openEdit(n){
+    setEditNom(n)
+    setForm({name:n.name||'',description:n.description||'',unit:n.unit||'усл',price:String(n.price||''),nds_rate:n.nds_rate||0,category:n.category||''})
+    setShowAdd(true)
+  }
+
   async function save(){
     if(!form.name){return}
     setLoading(true)
-    await nomenclature.create({...form,company_id:company.id,price:Number(form.price)||0})
+    if(editNom){
+      await nomenclature.update(editNom.id,{...form,price:Number(form.price)||0})
+    } else {
+      await nomenclature.create({...form,company_id:company.id,price:Number(form.price)||0})
+    }
     setLoading(false)
     setShowAdd(false)
+    setEditNom(null)
     setForm({name:'',description:'',unit:'усл',price:'',nds_rate:0,category:''})
     onRefresh()
   }
@@ -1450,6 +1475,7 @@ function NomScreen({C,company,nomList,onRefresh}){
               <p style={{color:C.muted,fontSize:9,margin:'2px 0 0'}}>{n.unit} · {n.nds_rate>0?`НДС ${n.nds_rate}%`:'Без НДС'}</p>
             </div>
             <p style={{color:C.p,fontSize:12,fontWeight:700,margin:0,flexShrink:0}}>{n.price>0?fmt(n.price):'—'}</p>
+            <button onClick={()=>openEdit(n)} style={{background:C.pSoft,border:'none',borderRadius:8,padding:'6px 10px',cursor:'pointer',color:C.p,fontSize:11,flexShrink:0,marginLeft:4}}>✏️</button>
           </div>
         ))}
         {filtered.length===0&&<p style={{color:C.muted,textAlign:'center',padding:'32px 0',fontSize:12}}>Позиций не найдено</p>}
@@ -1458,7 +1484,7 @@ function NomScreen({C,company,nomList,onRefresh}){
         <div style={{position:'fixed',inset:0,background:'rgba(0,0,0,.88)',display:'flex',alignItems:'flex-end',zIndex:200}}>
           <div style={{background:C.card,borderRadius:'22px 22px 0 0',width:'100%',maxHeight:'80vh',display:'flex',flexDirection:'column',padding:'18px 18px 26px',overflow:'hidden'}}>
             <div style={{width:36,height:4,background:C.dim,borderRadius:2,margin:'0 auto 14px'}}/>
-            <h3 style={{color:C.text,fontSize:14,fontWeight:700,margin:'0 0 14px'}}>Добавить позицию</h3>
+            <h3 style={{color:C.text,fontSize:14,fontWeight:700,margin:'0 0 14px'}}>{editNom?'✏️ Редактировать':'Добавить позицию'}</h3>
             <div style={{overflowY:'auto',flex:1}}>
               <Inp label="Наименование *" value={form.name} onChange={upd('name')} placeholder="Разработка сайта / Ноутбук HP" C={C}/>
               <Inp label="Описание" value={form.description} onChange={upd('description')} placeholder="Краткое описание" C={C}/>
@@ -1470,7 +1496,7 @@ function NomScreen({C,company,nomList,onRefresh}){
               <Inp label="Категория" value={form.category} onChange={upd('category')} placeholder="Услуги / Товары / IT" C={C}/>
             </div>
             <div style={{display:'flex',gap:8,marginTop:12,flexShrink:0}}>
-              <SBtn onClick={()=>setShowAdd(false)} C={C} style={{flex:1}}>Отмена</SBtn>
+              <SBtn onClick={()=>{setShowAdd(false);setEditNom(null);setForm({name:'',description:'',unit:'усл',price:'',nds_rate:0,category:''})}} C={C} style={{flex:1}}>Отмена</SBtn>
               <Btn onClick={save} loading={loading} style={{flex:2}}>💾 Сохранить</Btn>
             </div>
           </div>
@@ -1481,7 +1507,17 @@ function NomScreen({C,company,nomList,onRefresh}){
 }
 
 // ─── PROFILE SCREEN ───────────────────────────────────────────────
-function ProfileScreen({C,profile,company,onLogout}){
+function ProfileScreen({C,profile,company,onLogout,onCompanyUpdate}){
+  const [editReq,setEditReq]=useState(false)
+  const [reqLoading,setReqLoading]=useState(false)
+  const [reqForm,setReqForm]=useState({director:company?.director||'',address:company?.address||'',phone:company?.phone||'',email:company?.email||'',bank:company?.bank||'',iik:company?.iik||'',bik:company?.bik||''})
+  async function saveReq(){
+    setReqLoading(true)
+    await companies.update(company.id,reqForm)
+    setReqLoading(false)
+    setEditReq(false)
+    if(onCompanyUpdate) onCompanyUpdate()
+  }
   return(
     <div style={{flex:1,overflowY:'auto',paddingBottom:20}}>
       <div style={{padding:'10px 16px 0'}}>
@@ -1498,13 +1534,33 @@ function ProfileScreen({C,profile,company,onLogout}){
           </div>
         )}
         {company&&<>
-          <Sec C={C}>Реквизиты</Sec>
-          {[['Директор',company.director],['Адрес',company.address],['Телефон',company.phone],['Email',company.email],['Банк',company.bank],['ИИК',company.iik]].map(([l,v])=>v?(
-            <div key={l} style={{marginBottom:9}}>
-              <p style={{color:C.muted,fontSize:9,fontWeight:700,margin:'0 0 3px',textTransform:'uppercase'}}>{l}</p>
-              <div style={{background:C.card2,border:`1px solid ${C.border}`,borderRadius:10,padding:'9px 13px',color:C.text,fontSize:12}}>{v}</div>
+          <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:6}}>
+            <Sec C={C} style={{margin:0}}>Реквизиты</Sec>
+            <button onClick={()=>setEditReq(r=>!r)} style={{background:C.pSoft,border:'none',borderRadius:8,padding:'5px 12px',cursor:'pointer',color:C.p,fontSize:11,fontWeight:600}}>
+              {editReq?'✕ Закрыть':'✏️ Изменить'}
+            </button>
+          </div>
+          {editReq?(
+            <div style={{background:C.card,borderRadius:14,padding:'14px',marginBottom:10,border:`1px solid ${C.border}`}}>
+              <Inp label="Директор/Руководитель" value={reqForm.director} onChange={v=>setReqForm(f=>({...f,director:v}))} placeholder="Иванов Иван Иванович" C={C}/>
+              <Inp label="Адрес" value={reqForm.address} onChange={v=>setReqForm(f=>({...f,address:v}))} placeholder="г. Алматы, ул. Примерная, д. 1" C={C}/>
+              <Inp label="Телефон" value={reqForm.phone} onChange={v=>setReqForm(f=>({...f,phone:v}))} placeholder="+7 700 000 00 00" C={C}/>
+              <Inp label="Email" value={reqForm.email} onChange={v=>setReqForm(f=>({...f,email:v}))} placeholder="info@company.kz" C={C}/>
+              <Inp label="Банк" value={reqForm.bank} onChange={v=>setReqForm(f=>({...f,bank:v}))} placeholder="Halyk Bank" C={C}/>
+              <Inp label="ИИК" value={reqForm.iik} onChange={v=>setReqForm(f=>({...f,iik:v}))} placeholder="KZ..." C={C}/>
+              <Inp label="БИК" value={reqForm.bik} onChange={v=>setReqForm(f=>({...f,bik:v}))} placeholder="HSBKKZKX" C={C}/>
+              <Btn onClick={saveReq} loading={reqLoading}>💾 Сохранить реквизиты</Btn>
             </div>
-          ):null)}
+          ):(
+            <div>
+              {[['Директор',company.director],['Адрес',company.address],['Телефон',company.phone],['Email',company.email],['Банк',company.bank],['ИИК',company.iik]].map(([l,v])=>v?(
+                <div key={l} style={{marginBottom:9}}>
+                  <p style={{color:C.muted,fontSize:9,fontWeight:700,margin:'0 0 3px',textTransform:'uppercase'}}>{l}</p>
+                  <div style={{background:C.card2,border:`1px solid ${C.border}`,borderRadius:10,padding:'9px 13px',color:C.text,fontSize:12}}>{v}</div>
+                </div>
+              ):null)}
+            </div>
+          )}
         </>}
         <Sec C={C}>Аккаунт</Sec>
         <div style={{background:C.card,borderRadius:13,padding:'11px 13px',marginBottom:10,border:`1px solid ${C.border}`}}>
@@ -1961,7 +2017,7 @@ export default function App(){
     if(screen==='nomenclature') return <NomScreen C={C} company={company} nomList={nomList} onRefresh={loadAll}/>
     if(screen==='tariffs') return <TariffsScreen C={C} company={company} allTariffs={allTariffs} onSelect={(t)=>{alert(`Заявка на тариф «${t.name}» отправлена!\n\nДля активации свяжитесь:\n📞 +7 705 474 1612\n📧 info@bizbook.kz\n\nМы активируем тариф в течение 24 часов.`)}} onBack={()=>nav('home')}/>
     if(screen==='soon') return <SoonScreen C={C}/>
-    if(screen==='profile') return <ProfileScreen C={C} profile={profile} company={company} onLogout={handleLogout}/>
+    if(screen==='profile') return <ProfileScreen C={C} profile={profile} company={company} onLogout={handleLogout} onCompanyUpdate={loadAll}/>
     if(screen==='admin'&&isAdmin) return <AdminScreen C={C} allCompanies={allCompanies} allTariffs={allTariffs} allTariffRequests={allTariffRequests} onRefresh={loadAll}/>
     return <HomeScreen C={C} company={company} docs={docs} nav={nav}/>
   }
