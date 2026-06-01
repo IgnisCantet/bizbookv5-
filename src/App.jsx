@@ -563,12 +563,23 @@ function DocsScreen({C,company,docs,nav,onRefresh}){
               <span style={{fontSize:8,padding:'1px 6px',borderRadius:8,background:doc.direction==='out'?C.pSoft:'rgba(34,197,94,.12)',color:doc.direction==='out'?C.p:C.green,fontWeight:600}}>{doc.direction==='out'?'📤 Исходящий':'📥 Входящий'}</span>
               <span style={{color:C.dim,fontSize:9}}>{doc.date}</span>
               <span style={{fontSize:8,padding:'1px 6px',borderRadius:8,fontWeight:700,background:doc.pay_status==='paid'?'rgba(34,197,94,.13)':doc.pay_status==='partial'?'rgba(245,158,11,.13)':'rgba(239,68,68,.13)',color:doc.pay_status==='paid'?C.green:doc.pay_status==='partial'?C.gold:C.red}}>{doc.pay_status==='paid'?'✅ Оплачен':doc.pay_status==='partial'?'⚡ Частично':'⏳ Не оплачен'}</span>
-              {doc.type==='invoice'&&(()=>{
-                const hasAvr=docs.some(d=>d.linked_doc_id===doc.id&&d.type==='avr')
-                const hasSf=docs.some(d=>d.linked_doc_id===doc.id&&d.type==='sf')
-                if(hasSf&&hasAvr) return <span style={{fontSize:8,padding:'1px 6px',borderRadius:8,fontWeight:700,background:'rgba(34,197,94,.13)',color:C.green}}>✅ Отгружен</span>
-                if(hasAvr) return <span style={{fontSize:8,padding:'1px 6px',borderRadius:8,fontWeight:700,background:'rgba(245,158,11,.13)',color:C.gold}}>🚚 Частично</span>
-                return <span style={{fontSize:8,padding:'1px 6px',borderRadius:8,fontWeight:700,background:'rgba(239,68,68,.13)',color:C.red}}>📦 Не отгружен</span>
+              {(()=>{
+                // Для СО — считаем по дочерним документам
+                if(doc.type==='invoice'){
+                  const hasAvr=docs.some(d=>d.linked_doc_id===doc.id&&d.type==='avr')
+                  const hasSf=docs.some(d=>d.linked_doc_id===doc.id&&d.type==='sf')||docs.some(d=>d.linked_doc_id===doc.id&&d.type==='avr'&&docs.some(sf=>sf.linked_doc_id===d.id&&sf.type==='sf'))
+                  if(hasSf) return <span style={{fontSize:8,padding:'1px 6px',borderRadius:8,fontWeight:700,background:'rgba(34,197,94,.13)',color:C.green}}>✅ Отгружен</span>
+                  if(hasAvr) return <span style={{fontSize:8,padding:'1px 6px',borderRadius:8,fontWeight:700,background:'rgba(245,158,11,.13)',color:C.gold}}>🚚 Частично</span>
+                  return <span style={{fontSize:8,padding:'1px 6px',borderRadius:8,fontWeight:700,background:'rgba(239,68,68,.13)',color:C.red}}>📦 Не отгружен</span>
+                }
+                // Для АВР и СФ — берём ship_status из БД
+                if(doc.type==='avr'||doc.type==='sf'){
+                  const s=doc.ship_status||'not_shipped'
+                  if(s==='shipped') return <span style={{fontSize:8,padding:'1px 6px',borderRadius:8,fontWeight:700,background:'rgba(34,197,94,.13)',color:C.green}}>✅ Отгружен</span>
+                  if(s==='partial') return <span style={{fontSize:8,padding:'1px 6px',borderRadius:8,fontWeight:700,background:'rgba(245,158,11,.13)',color:C.gold}}>🚚 Частично</span>
+                  return <span style={{fontSize:8,padding:'1px 6px',borderRadius:8,fontWeight:700,background:'rgba(239,68,68,.13)',color:C.red}}>📦 Не отгружен</span>
+                }
+                return null
               })()}
               {doc.nds_amount>0&&<span style={{fontSize:8,padding:'1px 6px',borderRadius:8,background:C.gSoft,color:C.gold,fontWeight:600}}>НДС</span>}
             </div>
@@ -677,7 +688,7 @@ function generatePDF(doc, company){
     .bin-box{border:1px solid #000;padding:2px 6px;font-weight:bold;font-size:11pt;text-align:center;display:inline-block;min-width:35mm}
     .italic{font-style:italic;font-size:8pt;color:#555}
     .total-right{text-align:right;font-weight:bold;padding:3px 5px}
-    @media print{body{padding:10mm 10mm 10mm 15mm}@page{margin:0;size:A4}}
+    @media print{body{padding:10mm 10mm 10mm 15mm}@page{margin:0;size:A4}.no-print{display:none!important}}
   `
 
   let html = ''
@@ -910,7 +921,7 @@ function generatePDF(doc, company){
   const closeBtn = `<button onclick="window.parent.document.getElementById('bbModal').remove()" style="padding:10px 20px;background:#f0f0f0;color:#333;border:none;border-radius:8px;font-size:14px;cursor:pointer;font-family:Arial">✕ Закрыть</button>`
   const printBtn = `<button onclick="window.print()" style="padding:10px 24px;background:#7c6fff;color:#fff;border:none;border-radius:8px;font-size:14px;font-weight:bold;cursor:pointer;font-family:Arial">📥 Сохранить PDF</button>`
   const toolbar = `<div style="position:fixed;bottom:0;left:0;right:0;background:#fff;padding:10px 16px;border-top:1px solid #ddd;display:flex;gap:8px;justify-content:center;z-index:999;box-shadow:0 -2px 8px rgba(0,0,0,.1)">${printBtn}${closeBtn}</div>`
-  const fullHtml = `<!DOCTYPE html><html><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=0.6"><title>${doc.number}</title><style>${BASE}body{padding-bottom:70px;zoom:0.75}@media print{.no-print{display:none}}</style></head><body>${html}<div class="no-print" style="position:fixed;bottom:0;left:0;right:0;background:#fff;padding:10px 16px;border-top:1px solid #ddd;display:flex;gap:8px;justify-content:center;z-index:999;box-shadow:0 -2px 8px rgba(0,0,0,.1)">${printBtn}</div></body></html>`
+  const fullHtml = `<!DOCTYPE html><html><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=0.6"><title>${doc.number}</title><style>${BASE}body{padding-bottom:70px;zoom:0.75}@media print{.no-print{display:none!important}.print-toolbar{display:none!important}}</style></head><body>${html}<div class="no-print" style="position:fixed;bottom:0;left:0;right:0;background:#fff;padding:10px 16px;border-top:1px solid #ddd;display:flex;gap:8px;justify-content:center;z-index:999;box-shadow:0 -2px 8px rgba(0,0,0,.1)">${printBtn}</div></body></html>`
   // Пробуем window.open (браузер), если заблокировано — показываем внутри
   const win = window.open('about:blank','_blank')
   if(win){
